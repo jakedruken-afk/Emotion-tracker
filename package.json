@@ -14,7 +14,8 @@
     "check": "tsc --noEmit",
     "backup": "node scripts/backup-db.mjs",
     "restore": "node scripts/restore-db.mjs",
-    "bootstrap:support": "node scripts/bootstrap-support.mjs"
+    "bootstrap:support": "node scripts/bootstrap-support.mjs",
+    "release:bundle": "npm run build && node scripts/create-release-bundle.mjs"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

@@ -1,20 +1,86 @@
-# Emotion Tracker
+# L.A.M.B
 
-This project rebuilds the flattened app export into a normal local project you can edit in Atom and run from a terminal.
+<p align="center">
+  <img src="client/public/lamb-logo.jpeg" alt="L.A.M.B logo" width="240" />
+</p>
 
-## What It Uses
+<p align="center">
+  <strong>Listen. Aid. Manage. Balance.</strong><br />
+  A private-pilot mental health and addictions support app for between-visit tracking, clinician review, and safer follow-up.
+</p>
 
-- Vite + React + TypeScript for the frontend
-- Express + TypeScript for the API
-- Node's built-in `node:sqlite` for a local file-based database
+<p align="center">
+  <a href="https://github.com/jakedruken-afk/Emotion-tracker/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/jakedruken-afk/Emotion-tracker/actions/workflows/ci.yml/badge.svg" /></a>
+  <a href="https://github.com/jakedruken-afk/Emotion-tracker/actions/workflows/release.yml"><img alt="Release" src="https://github.com/jakedruken-afk/Emotion-tracker/actions/workflows/release.yml/badge.svg" /></a>
+  <a href="https://github.com/jakedruken-afk/Emotion-tracker/actions/workflows/deploy.yml"><img alt="Deploy" src="https://github.com/jakedruken-afk/Emotion-tracker/actions/workflows/deploy.yml/badge.svg" /></a>
+  <a href="https://github.com/jakedruken-afk/Emotion-tracker/actions/workflows/server-backup.yml"><img alt="Server Backup" src="https://github.com/jakedruken-afk/Emotion-tracker/actions/workflows/server-backup.yml/badge.svg" /></a>
+</p>
 
-## Before You Run It
+## What L.A.M.B Does
 
-1. Install Node.js `22+` from [nodejs.org](https://nodejs.org/).
-2. Open `C:\Users\Druken's Advertise\Documents\emotion-tracker` in Atom.
-3. Open a terminal in that folder.
+L.A.M.B is built to help care teams see the parts of daily life they miss between appointments.
+It gives patients a calmer check-in flow, gives support workers a triage and review workspace,
+and gives clinicians a separate doctor-ready review page with summaries, screening, medications,
+care planning, and follow-up context in one place.
 
-## Run It
+This app is meant to support clinical pattern review and safer follow-up. It is not a diagnosis
+engine and it is not a lie detector.
+
+## Current Pilot Features
+
+- Patient mood check-ins with structured context
+- Optional one-time GPS snapshot with separate consent
+- Morning and night sleep reports
+- Weekly safety and symptom screening with richer follow-up questions
+- Support-worker dashboard with priority queue, trend review, and local care pathways
+- Separate doctor review page with printable visit summary, visit questions, medications, and care plan
+- Invite-only onboarding for private pilots
+- Server-backed sessions with `httpOnly` cookies
+- Consent records, assignment-based access, and audit logging
+- Backup, restore, release bundle, and GitHub-driven deploy support
+
+## Product Flow
+
+### Patient Side
+
+- Log in through an invite-created account
+- Complete privacy and consent choices
+- Record mood, sleep, and weekly screening data
+- Keep a simple history of personal entries
+
+### Support Side
+
+- Review assigned patients only
+- Use a priority queue to focus follow-up
+- Add observations and care notes
+- Manage invites and patient-to-staff assignments
+- Open the doctor review page for a selected patient
+
+### Doctor Review
+
+- Read a concise chart-ready visit summary
+- Review weekly screening status and risk signals
+- See sleep, mood, and substance-use related trends
+- Update clinician-managed medications and care plan
+- Print or copy visit notes for case review
+
+## Tech Stack
+
+- `Vite + React + TypeScript`
+- `Express + TypeScript`
+- Node built-in `node:sqlite`
+- `PM2` for production process management
+- `Caddy` as the recommended HTTPS reverse proxy
+- `GitHub Actions` for CI, release bundles, deploys, and server backups
+
+## Local Development
+
+### Requirements
+
+- Node.js `22+`
+- npm
+
+### Run Locally
 
 ```powershell
 npm install
@@ -24,131 +90,133 @@ npm run dev
 - Frontend: `http://localhost:5173`
 - API: `http://localhost:3001`
 
-## Demo Accounts
+### Demo Accounts
 
 - Patient: `patient1` / `demo123`
 - Support worker: `support1` / `demo123`
 
-These demo accounts are meant for local development only. When `LAMB_PRODUCTION_MODE=true`, the app expects clinician-invite-only onboarding instead of public demo credentials.
-
-## GPS Logging
-
-- Patients can optionally include a one-time GPS snapshot when saving a mood entry.
-- Browsers will ask for location permission the first time this is used.
-- Support logs show saved coordinates, accuracy, and an `Open map` link when location was captured.
-
-## Structured Check-Ins
-
-- Mood entries now include sleep, stress, cravings, substance-use self-report, money-change context, and medication adherence.
-- The support dashboard summarizes these fields and shows neutral follow-up flags like `low sleep`, `high craving`, and `medication adherence concern`.
-- These flags are intended to support clinician review and pattern recognition, not to make a diagnosis or prove dishonesty.
-
-## Daily Reports
-
-- Patients now have a separate `Morning report` and `Night report` section on the patient side.
-- Morning reports capture bedtime, wake time, sleep quality, wake-ups, and whether the patient feels rested.
-- Night reports capture planned bedtime and optional notes about what may make sleep difficult.
-- Patients also see a simple `done today / still needed / later today` reminder status for the morning and night report.
-- The support dashboard includes a `Daily Sleep Reports` panel with recent reports and sleep-focused summary metrics.
-
-## Clinician Snapshot
-
-- The support dashboard now includes a `Clinician Snapshot` section for the selected patient.
-- It generates a copyable summary paragraph, repeated review signals, and simple trend charts for sleep, stress, and cravings.
-- This is meant to help staff prepare a handoff or chart note more quickly before a visit.
-
-## Dedicated Doctor Review Page
-
-- Support users can now open a separate doctor-facing review page for the selected patient.
-- The doctor page pulls together the visit summary, follow-up questions, recent observations, weekly screening, trend charts, medication list, and care plan in one cleaner layout.
-- The page also supports browser print-to-PDF, plus copy actions for the visit summary and visit questions.
-
-## Medications And Care Plan
-
-- A clinician-managed medication list can now be added and updated for each patient.
-- A clinician-managed care plan can now be created and updated for each patient, including goals, triggers, warning signs, what helps, support contacts, and preferred follow-up notes.
-- These fields are intended for support-worker and clinician use, not patient entry.
-
-## Risk Queue And Weekly Review
-
-- The support dashboard now includes a `Priority Queue` that ranks patients by recent review signals from mood, sleep, medication, and substance-use data.
-- Each patient card shows a simple risk level, the main reasons they were flagged, and the most recent data time.
-- The selected patient also gets a `Weekly Review` panel with key changes, suggested next steps, data gaps, and copy/download actions for a quick handoff note.
-- These rankings are meant to support clinician triage, not replace clinical judgment or make a diagnosis.
-
-## NL Care Pathways
-
-- The support dashboard now includes `NL Care Pathways` quick links for the selected patient.
-- Suggested actions change with the current patient risk level and include options like `811`, `Doorways`, `Systems Navigator`, `Lifewise Warmline`, `Bridge the gapp`, and `Patient Connect NL`.
-- These are meant to help support workers and clinicians move from pattern review to a real local next step more quickly.
+Demo accounts are for local development only. In production mode, L.A.M.B expects clinician-managed onboarding and demo seeding should be turned off.
 
 ## Secure Pilot Features
 
-- Sign-in now uses secure server-backed sessions with `httpOnly` cookies.
-- Passwords are hashed before they are stored.
-- Existing data routes now enforce patient ownership or support-staff assignment checks on the server.
-- Support users have a separate `Manage Access` page for invite-only onboarding and patient-to-staff assignments.
-- Support-facing patient lists now show assigned patients instead of the entire pilot database.
-- Patients now see a privacy and consent step before using mood, sleep, weekly-screen, and GPS features.
-- GPS stays off by default until separate location consent is accepted.
-- Audit logging is recorded for sign-in, record views, and write actions such as mood entries, reports, medications, care plans, invites, assignments, and consent changes.
+- Server-backed sign-in with `httpOnly` cookies
+- Password hashing
+- Assignment-based patient access
+- Invite-only onboarding
+- Patient consent records for mood, sleep, weekly screening, and GPS
+- GPS off by default until explicit consent is given
+- Audit logging for sign-in, views, writes, invites, assignments, medications, care plans, and consent changes
 
 ## Environment Setup
 
-Copy `.env.example` to `.env` and update the values for your environment.
-The server and maintenance scripts load `.env` automatically from the project root.
+Copy `.env.example` to `.env` and update it for your environment. The server and maintenance
+scripts load `.env` automatically from the project root.
 
-Important live settings:
+Important production settings:
 
-- `NODE_ENV=production`
-- `LAMB_PRODUCTION_MODE=true`
-- `SESSION_SECRET=` a strong random secret
-- `APP_BASE_URL=` the public app URL used for invite activation links
-- `DATABASE_PATH=` the production database location
-- `BACKUP_DIR=` where database backups should be written
-- `ENABLE_DEMO_SEED=false`
+```dotenv
+NODE_ENV=production
+LAMB_PRODUCTION_MODE=true
+SESSION_SECRET=replace-with-a-long-random-secret
+APP_BASE_URL=https://your-domain.example
+DATABASE_PATH=/srv/lamb-pilot/shared/data/emotion-tracker.db
+BACKUP_DIR=/srv/lamb-pilot/shared/backups
+ENABLE_DEMO_SEED=false
+TRUST_PROXY=true
+```
 
-Before the first live pilot sign-in, create the first support account:
+Before the first live sign-in, create the first support account:
 
 ```powershell
 npm run bootstrap:support -- --username pilot-support --first-name Pilot --last-name Lead
 ```
 
-The script will prompt for the password if you do not pass one on the command line. After that
-first support account exists, use the in-app `Manage Access` page to invite patients and
-additional staff.
+## GitHub Workflows
 
-## Production Build
+### CI
+
+[`ci.yml`](.github/workflows/ci.yml)
+
+- Runs on pushes to `main` and on pull requests
+- Installs dependencies
+- Runs `npm run check`
+- Runs `npm run build`
+
+### Release
+
+[`release.yml`](.github/workflows/release.yml)
+
+- Runs on version tags like `v0.1.0`
+- Can also run manually
+- Builds a release bundle
+- Uploads the bundle as a workflow artifact
+- Publishes the bundle to a GitHub release
+
+### Deploy
+
+[`deploy.yml`](.github/workflows/deploy.yml)
+
+- Manual workflow
+- Builds the selected Git ref
+- Uploads a built bundle to the live server over SSH
+- Applies the release with [`deploy/apply-release.sh`](deploy/apply-release.sh)
+- Reloads the app through PM2
+
+### Server Backup
+
+[`server-backup.yml`](.github/workflows/server-backup.yml)
+
+- Manual workflow
+- Triggers `npm run backup` on the live server
+- Downloads the newest backup into the GitHub Actions run
+- Uploads the backup as an artifact
+
+## Releases And Backup Commands
+
+### Build A Local Release Bundle
 
 ```powershell
-npm run build
-npm start
+npm run release:bundle -- v0.1.0
 ```
 
-For a managed restart strategy, a sample [ecosystem.config.cjs](C:\Users\Druken's Advertise\Documents\emotion-tracker\ecosystem.config.cjs) file is included for PM2-style process management.
-
-For HTTPS in front of the Node app, a sample [Caddyfile.example](C:\Users\Druken's Advertise\Documents\emotion-tracker\deploy\Caddyfile.example) is included in `deploy/`.
-
-## Backup And Restore
-
-Create a backup:
+### Create A Local Backup
 
 ```powershell
 npm run backup
 ```
 
-Restore from a backup file:
+### Restore From Backup
 
 ```powershell
 npm run restore -- .\backups\emotion-tracker-YYYYMMDD-HHMMSS.db
 ```
 
-Before restoring, stop the running app so the SQLite files are not being written to during the restore.
+Stop the running app before a restore so the SQLite files are not being written to during the operation.
 
-## Notes
+## Live Deployment
 
-- The SQLite database is created automatically at `data/emotion-tracker.db` unless `DATABASE_PATH` is set.
-- Demo patient and support users are only seeded when demo seeding is enabled.
-- Data persists between restarts because it is stored in the local SQLite file.
-- The server uses Node's built-in `node:sqlite`, so no native SQLite package needs to be compiled during install.
-- A public health endpoint is available at `/api/health`.
+Production deployment guidance lives in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
+Included support files:
+
+- [`deploy/Caddyfile.example`](deploy/Caddyfile.example)
+- [`deploy/apply-release.sh`](deploy/apply-release.sh)
+- [`ecosystem.config.cjs`](ecosystem.config.cjs)
+
+## Repository Notes
+
+- The local SQLite database is ignored by Git
+- `node_modules`, build output, `.env`, backups, and temp files stay out of the repo
+- The app can be developed on Windows, but the included live deployment flow targets a Linux server
+
+## Roadmap Direction
+
+The app is already moving beyond simple mood logging and toward a stronger clinical pilot:
+
+- richer patient daily data
+- safer screening workflows
+- assignment-based staff review
+- doctor-specific review pages
+- release, backup, and deploy operations from GitHub
+
+The next major layers after a stable pilot are likely deeper accessibility, broader clinical summaries, and health-system integration.

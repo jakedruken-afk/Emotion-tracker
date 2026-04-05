@@ -1,0 +1,103 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to deploy
+        required: true
+        default: main
+        type: string
+      environment:
+        description: GitHub environment name
+        required: true
+        default: production
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ github.event.inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+      DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run check
+
+      - name: Build
+        run: npm run build
+
+      - name: Resolve bundle metadata
+        id: meta
+        shell: bash
+        run: |
+          SAFE_REF="$(echo "${{ github.event.inputs.ref }}" | sed 's/[^A-Za-z0-9._-]/-/g')"
+          BUNDLE_NAME="lamb-pilot-${SAFE_REF}-${GITHUB_SHA::7}"
+          echo "bundle_name=$BUNDLE_NAME" >> "$GITHUB_OUTPUT"
+          echo "archive_path=tmp/release-bundles/$BUNDLE_NAME.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - name: Create release bundle
+        run: node scripts/create-release-bundle.mjs "${{ steps.meta.outputs.bundle_name }}"
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          if [[ -z "$DEPLOY_HOST" || -z "$DEPLOY_USER" || -z "$DEPLOY_SSH_KEY" ]]; then
+            echo "DEPLOY_HOST, DEPLOY_USER, and DEPLOY_SSH_KEY must be set in GitHub environment secrets."
+            exit 1
+          fi
+
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          PORT="${DEPLOY_PORT:-22}"
+          ssh-keyscan -p "$PORT" "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+      - name: Upload bundle
+        shell: bash
+        run: |
+          PORT="${DEPLOY_PORT:-22}"
+          REMOTE_ARCHIVE="/tmp/${{ steps.meta.outputs.bundle_name }}.tar.gz"
+          scp -P "$PORT" "${{ steps.meta.outputs.archive_path }}" "${DEPLOY_USER}@${DEPLOY_HOST}:${REMOTE_ARCHIVE}"
+
+      - name: Deploy on server
+        shell: bash
+        run: |
+          PORT="${DEPLOY_PORT:-22}"
+          TARGET_PATH="${DEPLOY_PATH:-/srv/lamb-pilot}"
+          REMOTE_ARCHIVE="/tmp/${{ steps.meta.outputs.bundle_name }}.tar.gz"
+          REMOTE_DIR="/tmp/${{ steps.meta.outputs.bundle_name }}"
+
+          ssh -p "$PORT" "${DEPLOY_USER}@${DEPLOY_HOST}" "
+            rm -rf '${REMOTE_DIR}' &&
+            tar -xzf '${REMOTE_ARCHIVE}' -C /tmp &&
+            bash '${REMOTE_DIR}/deploy/apply-release.sh' '${TARGET_PATH}' '${REMOTE_DIR}' &&
+            rm -f '${REMOTE_ARCHIVE}'
+          "

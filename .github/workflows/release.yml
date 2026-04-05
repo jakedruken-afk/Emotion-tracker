@@ -1,0 +1,77 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release tag to create, for example v0.1.0
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run check
+
+      - name: Build
+        run: npm run build
+
+      - name: Resolve release metadata
+        id: meta
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            VERSION="${{ github.event.inputs.version }}"
+          fi
+          SAFE_VERSION="$(echo "$VERSION" | sed 's/[^A-Za-z0-9._-]/-/g')"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "bundle_name=lamb-pilot-$SAFE_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Create release bundle
+        run: node scripts/create-release-bundle.mjs "${{ steps.meta.outputs.version }}"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.meta.outputs.bundle_name }}
+          path: tmp/release-bundles/${{ steps.meta.outputs.bundle_name }}.tar.gz
+          retention-days: 30
+
+      - name: Create or update GitHub release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          if ! gh release view "${{ steps.meta.outputs.version }}" >/dev/null 2>&1; then
+            gh release create "${{ steps.meta.outputs.version }}" \
+              --title "${{ steps.meta.outputs.version }}" \
+              --generate-notes
+          fi
+
+          gh release upload "${{ steps.meta.outputs.version }}" \
+            "tmp/release-bundles/${{ steps.meta.outputs.bundle_name }}.tar.gz" \
+            --clobber
