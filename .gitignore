@@ -6,3 +6,4 @@ data/*.db-wal
 backups/
 .env
 .DS_Store
+tmp/
