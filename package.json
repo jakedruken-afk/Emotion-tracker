@@ -13,6 +13,7 @@
     "start": "node dist/server/index.js",
     "check": "tsc --noEmit && npm run check:triage",
     "check:triage": "tsx scripts/triage-regression.ts",
+    "backfill:triage": "tsx scripts/backfill-triage.ts",
     "backup": "node scripts/backup-db.mjs",
     "restore": "node scripts/restore-db.mjs",
     "bootstrap:support": "node scripts/bootstrap-support.mjs",

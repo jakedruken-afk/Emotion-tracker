@@ -151,6 +151,15 @@ type ObservationFormState = {
   supportWorkerName: string;
 };
 
+type CriticalAlertTarget = {
+  title: string;
+  summary: string;
+  detail: string;
+  tab: SupportWorkspace;
+  targetId: string;
+  timestamp: string;
+};
+
 type SupportPageProps = {
   user: AuthUser;
   onLogout: () => void;
@@ -180,6 +189,8 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
     priority: "Medium",
     supportWorkerName,
   });
+  const [showCriticalAlert, setShowCriticalAlert] = useState(false);
+  const [pendingScrollTargetId, setPendingScrollTargetId] = useState<string | null>(null);
   const { toast } = useToast();
 
   const loadDashboard = async () => {
@@ -388,6 +399,11 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
     (snapshot) => snapshot.riskLevel === "High",
   ).length;
   const recommendedCarePathways = getRecommendedCarePathways(focusRisk.riskLevel);
+  const criticalAlert = getSupportCriticalAlert(
+    selectedPatientAllLogs,
+    selectedPatientAllDailyReports,
+    selectedPatientAllScreenings,
+  );
   const selectedPatientFlags = Array.from(
     new Set(selectedPatientLogs.flatMap((log) => getEmotionFlags(log))),
   );
@@ -418,6 +434,36 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
     }
   }, [patientIds, selectedPatientId, setSearchParams]);
 
+  useEffect(() => {
+    setShowCriticalAlert(Boolean(criticalAlert));
+  }, [selectedPatientId, criticalAlert?.targetId]);
+
+  useEffect(() => {
+    if (!pendingScrollTargetId) {
+      return;
+    }
+
+    const animationFrame = window.requestAnimationFrame(() => {
+      const target = document.getElementById(pendingScrollTargetId);
+      if (!target) {
+        return;
+      }
+
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+      setPendingScrollTargetId(null);
+    });
+
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [
+    pendingScrollTargetId,
+    activeTab,
+    timeFilter,
+    emotionFilter,
+    selectedPatientLogs.length,
+    selectedPatientDailyReports.length,
+    selectedPatientScreenings.length,
+  ]);
+
   const handleFormChange =
     (field: keyof ObservationFormState) =>
     (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
@@ -447,6 +493,18 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
 
   const handleOpenDoctorReview = () => {
     navigate(`/doctor/${encodeURIComponent(selectedPatientId)}`);
+  };
+
+  const handleOpenCriticalAlert = () => {
+    if (!criticalAlert) {
+      return;
+    }
+
+    setShowCriticalAlert(false);
+    setTimeFilter("all");
+    setEmotionFilter("all");
+    setActiveTab(criticalAlert.tab);
+    setPendingScrollTargetId(criticalAlert.targetId);
   };
 
   const handleOpenAccessManagement = () => {
@@ -628,6 +686,15 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
       </header>
 
       <main className="app-container py-6 md:py-8">
+        {showCriticalAlert && criticalAlert ? (
+          <CriticalAlertOverlay
+            patientId={selectedPatientId}
+            alert={criticalAlert}
+            onOpen={handleOpenCriticalAlert}
+            onDismiss={() => setShowCriticalAlert(false)}
+          />
+        ) : null}
+
         <section className="hero-panel">
           <div className="hero-grid">
             <div className="hero-copy">
@@ -911,6 +978,15 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
                     </button>
                   </div>
 
+                  {criticalAlert ? (
+                    <CriticalAlertCallout
+                      className="mt-6"
+                      patientId={selectedPatientId}
+                      alert={criticalAlert}
+                      onOpen={handleOpenCriticalAlert}
+                    />
+                  ) : null}
+
                   <div className="mt-6">
                     <p className="text-sm font-semibold text-slate-900">
                       Recommended care links
@@ -1153,7 +1229,9 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
                   {isLoadingLogs ? (
                     <EmptyPanel message="Loading the latest weekly screen..." />
                   ) : latestScreening ? (
-                    <WeeklyScreeningCard screening={latestScreening} />
+                    <div id={`support-screening-${latestScreening.id}`}>
+                      <WeeklyScreeningCard screening={latestScreening} />
+                    </div>
                   ) : (
                     <EmptyPanel message="No weekly safety screen has been completed for this patient yet." />
                   )}
@@ -1192,11 +1270,12 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
                       <EmptyPanel message="Loading patient screening data..." />
                     ) : selectedPatientScreenings.length > 0 ? (
                       selectedPatientScreenings.slice(0, 4).map((screening) => (
-                        <WeeklyScreeningCard
-                          key={screening.id}
-                          screening={screening}
-                          compact={screening.id !== latestScreening?.id}
-                        />
+                        <div key={screening.id} id={`support-screening-${screening.id}`}>
+                          <WeeklyScreeningCard
+                            screening={screening}
+                            compact={screening.id !== latestScreening?.id}
+                          />
+                        </div>
                       ))
                     ) : (
                       <EmptyPanel message="No weekly screens match the current time range for this patient." />
@@ -1326,11 +1405,9 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
                     <EmptyPanel message="Loading patient logs..." />
                   ) : selectedPatientLogs.length > 0 ? (
                     selectedPatientLogs.map((log) => (
-                      <EmotionLogCard
-                        key={log.id}
-                        log={log}
-                        onSelectPatient={selectPatient}
-                      />
+                      <div key={log.id} id={`support-log-${log.id}`}>
+                        <EmotionLogCard log={log} onSelectPatient={selectPatient} />
+                      </div>
                     ))
                   ) : (
                     <EmptyPanel message="No emotion logs match the current filters for this patient yet." />
@@ -1424,7 +1501,9 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
                 <div className="mt-6 space-y-3">
                   {selectedPatientDailyReports.length > 0 ? (
                     selectedPatientDailyReports.slice(0, 8).map((report) => (
-                      <SleepReportCard key={report.id} report={report} />
+                      <div key={report.id} id={`support-report-${report.id}`}>
+                        <SleepReportCard report={report} />
+                      </div>
                     ))
                   ) : (
                     <EmptyPanel message="No daily sleep reports are recorded in the selected time range." />
@@ -1738,6 +1817,146 @@ function SectionHeader({
       <p className="section-copy">{copy}</p>
     </div>
   );
+}
+
+function CriticalAlertOverlay({
+  patientId,
+  alert,
+  onOpen,
+  onDismiss,
+}: {
+  patientId: string;
+  alert: CriticalAlertTarget;
+  onOpen: () => void;
+  onDismiss: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-950/45 px-4 py-10">
+      <div className="w-full max-w-3xl rounded-[32px] border border-rose-200 bg-white p-6 shadow-2xl">
+        <p className="mini-heading text-rose-700">Critical Alert</p>
+        <h2 className="mt-3 text-3xl font-semibold text-slate-950">
+          {patientId} needs immediate review.
+        </h2>
+        <p className="mt-4 text-base leading-7 text-slate-700">{alert.summary}</p>
+        <p className="mt-3 text-sm leading-6 text-slate-600">{alert.detail}</p>
+        <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-rose-700">
+          Click below to jump straight to the triggering entry.
+        </p>
+
+        <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+          <button type="button" className="btn btn-primary flex-1" onClick={onOpen}>
+            Open Critical Alert
+          </button>
+          <button type="button" className="btn btn-secondary flex-1" onClick={onDismiss}>
+            Dismiss For Now
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CriticalAlertCallout({
+  patientId,
+  alert,
+  onOpen,
+  className = "",
+}: {
+  patientId: string;
+  alert: CriticalAlertTarget;
+  onOpen: () => void;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      className={`w-full rounded-[28px] border border-rose-200 bg-rose-50 px-5 py-5 text-left shadow-sm transition hover:border-rose-300 hover:bg-rose-100 ${className}`}
+      onClick={onOpen}
+    >
+      <p className="text-xs font-semibold uppercase tracking-[0.3em] text-rose-700">
+        Critical Alert
+      </p>
+      <h3 className="mt-3 text-2xl font-semibold text-rose-950">
+        {patientId} requires immediate attention.
+      </h3>
+      <p className="mt-3 text-sm leading-6 text-rose-900">{alert.summary}</p>
+      <p className="mt-2 text-sm leading-6 text-rose-800">{alert.detail}</p>
+      <p className="mt-4 text-sm font-semibold text-rose-900">Click to open the triggering entry.</p>
+    </button>
+  );
+}
+
+function getSupportCriticalAlert(
+  logs: EmotionLog[],
+  dailyReports: DailyReportRecord[],
+  screenings: WeeklyScreeningRecord[],
+): CriticalAlertTarget | null {
+  const candidates: Array<CriticalAlertTarget & { sortTime: number }> = [];
+
+  for (const log of logs) {
+    if (log.crisisLevel !== "critical") {
+      continue;
+    }
+
+    candidates.push({
+      title: "Critical Alert",
+      summary: log.crisisSummary ?? "A patient check-in includes critical safety language.",
+      detail: `Triggered by a ${log.emotion.toLowerCase()} check-in recorded on ${format(
+        new Date(log.timestamp),
+        "MMM d, yyyy 'at' h:mm a",
+      )}.`,
+      tab: "timeline",
+      targetId: `support-log-${log.id}`,
+      timestamp: log.timestamp,
+      sortTime: new Date(log.timestamp).getTime(),
+    });
+  }
+
+  for (const report of dailyReports) {
+    if (report.crisisLevel !== "critical") {
+      continue;
+    }
+
+    candidates.push({
+      title: "Critical Alert",
+      summary: report.crisisSummary ?? "A sleep or meals report includes critical safety language.",
+      detail: `Triggered by a ${report.reportType} report recorded on ${format(
+        new Date(report.timestamp),
+        "MMM d, yyyy 'at' h:mm a",
+      )}.`,
+      tab: report.reportType === "night" ? "sleep" : "sleep",
+      targetId: `support-report-${report.id}`,
+      timestamp: report.timestamp,
+      sortTime: new Date(report.timestamp).getTime(),
+    });
+  }
+
+  for (const screening of screenings) {
+    if (screening.crisisLevel !== "critical") {
+      continue;
+    }
+
+    candidates.push({
+      title: "Critical Alert",
+      summary:
+        screening.crisisSummary ??
+        "The weekly screen shows a current need for immediate safety support.",
+      detail: `Triggered by a weekly screen recorded on ${format(
+        new Date(screening.timestamp),
+        "MMM d, yyyy 'at' h:mm a",
+      )}.`,
+      tab: "screening",
+      targetId: `support-screening-${screening.id}`,
+      timestamp: screening.timestamp,
+      sortTime: new Date(screening.timestamp).getTime(),
+    });
+  }
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  return candidates.sort((left, right) => right.sortTime - left.sortTime)[0];
 }
 
 function isNumber(value: number | null): value is number {

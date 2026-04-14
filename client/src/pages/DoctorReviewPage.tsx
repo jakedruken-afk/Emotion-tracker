@@ -76,6 +76,13 @@ type CarePlanFormState = {
   preferredFollowUpNotes: string;
 };
 
+type DoctorCriticalAlertTarget = {
+  summary: string;
+  detail: string;
+  targetId: string;
+  timestamp: string;
+};
+
 function createEmptyMedicationForm(): MedicationFormState {
   return {
     medicationName: "",
@@ -127,6 +134,8 @@ export default function DoctorReviewPage({
   const [medications, setMedications] = useState<MedicationRecord[]>([]);
   const [carePlan, setCarePlan] = useState<CarePlanRecord | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [showCriticalAlert, setShowCriticalAlert] = useState(false);
+  const [pendingScrollTargetId, setPendingScrollTargetId] = useState<string | null>(null);
   const [isSavingMedication, setIsSavingMedication] = useState(false);
   const [isSavingCarePlan, setIsSavingCarePlan] = useState(false);
   const [editingMedicationId, setEditingMedicationId] = useState<number | null>(null);
@@ -244,6 +253,35 @@ export default function DoctorReviewPage({
   const averageWakeUps = getAverageWakeUps(morningReports);
   const activeMedications = medications.filter((medication) => medication.isActive);
   const inactiveMedications = medications.filter((medication) => !medication.isActive);
+  const criticalAlert = getDoctorCriticalAlert(entries, dailyReports, screenings, observations);
+
+  useEffect(() => {
+    setShowCriticalAlert(Boolean(criticalAlert));
+  }, [patientId, criticalAlert?.targetId]);
+
+  useEffect(() => {
+    if (!pendingScrollTargetId) {
+      return;
+    }
+
+    const animationFrame = window.requestAnimationFrame(() => {
+      const target = document.getElementById(pendingScrollTargetId);
+      if (!target) {
+        return;
+      }
+
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+      setPendingScrollTargetId(null);
+    });
+
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [
+    pendingScrollTargetId,
+    entries.length,
+    dailyReports.length,
+    screenings.length,
+    observations.length,
+  ]);
 
   const handleBackToSupport = () => {
     navigate(`/support?patient=${encodeURIComponent(patientId)}`);
@@ -285,6 +323,15 @@ export default function DoctorReviewPage({
 
   const handlePrint = () => {
     window.print();
+  };
+
+  const handleOpenCriticalAlert = () => {
+    if (!criticalAlert) {
+      return;
+    }
+
+    setShowCriticalAlert(false);
+    setPendingScrollTargetId(criticalAlert.targetId);
   };
 
   const handleMedicationSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -459,6 +506,15 @@ export default function DoctorReviewPage({
       </header>
 
       <main className="app-container py-6 md:py-8">
+        {showCriticalAlert && criticalAlert ? (
+          <DoctorCriticalAlertOverlay
+            patientId={patientId}
+            alert={criticalAlert}
+            onOpen={handleOpenCriticalAlert}
+            onDismiss={() => setShowCriticalAlert(false)}
+          />
+        ) : null}
+
         <section className="hero-panel">
           <div className="hero-grid">
             <div className="hero-copy">
@@ -618,6 +674,15 @@ export default function DoctorReviewPage({
               </div>
             )}
           </div>
+
+          {criticalAlert ? (
+            <DoctorCriticalAlertCallout
+              className="mt-6"
+              patientId={patientId}
+              alert={criticalAlert}
+              onOpen={handleOpenCriticalAlert}
+            />
+          ) : null}
         </section>
 
         <div className="content-stack">
@@ -663,7 +728,11 @@ export default function DoctorReviewPage({
                     <EmptyPanel message="Loading recent observations..." />
                   ) : observations.length > 0 ? (
                     observations.slice(0, 6).map((observation) => (
-                      <div key={observation.id} className="timeline-card">
+                      <div
+                        key={observation.id}
+                        id={`doctor-observation-${observation.id}`}
+                        className="timeline-card"
+                      >
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="badge bg-slate-100 text-slate-700">
                             {observation.observationType}
@@ -844,7 +913,9 @@ export default function DoctorReviewPage({
                   {isLoading ? (
                     <EmptyPanel message="Loading the latest weekly screen..." />
                   ) : latestScreening ? (
-                    <WeeklyScreeningCard screening={latestScreening} />
+                    <div id={`doctor-screening-${latestScreening.id}`}>
+                      <WeeklyScreeningCard screening={latestScreening} />
+                    </div>
                   ) : (
                     <EmptyPanel message="No weekly safety screen has been recorded yet." />
                   )}
@@ -901,7 +972,9 @@ export default function DoctorReviewPage({
                     <EmptyPanel message="Loading mood entries..." />
                   ) : entries.length > 0 ? (
                     entries.slice(0, 4).map((entry) => (
-                      <EmotionEntryCard key={entry.id} entry={entry} />
+                      <div key={entry.id} id={`doctor-entry-${entry.id}`}>
+                        <EmotionEntryCard entry={entry} />
+                      </div>
                     ))
                   ) : (
                     <EmptyPanel message="No mood entries have been recorded for this patient yet." />
@@ -913,7 +986,9 @@ export default function DoctorReviewPage({
                     <EmptyPanel message="Loading sleep reports..." />
                   ) : dailyReports.length > 0 ? (
                     dailyReports.slice(0, 4).map((report) => (
-                      <DailyReportCard key={report.id} report={report} />
+                      <div key={report.id} id={`doctor-report-${report.id}`}>
+                        <DailyReportCard report={report} />
+                      </div>
                     ))
                   ) : (
                     <EmptyPanel message="No sleep reports have been recorded for this patient yet." />
@@ -1320,6 +1395,158 @@ function EmptyPanel({ message }: { message: string }) {
       {message}
     </div>
   );
+}
+
+function DoctorCriticalAlertOverlay({
+  patientId,
+  alert,
+  onOpen,
+  onDismiss,
+}: {
+  patientId: string;
+  alert: DoctorCriticalAlertTarget;
+  onOpen: () => void;
+  onDismiss: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-950/45 px-4 py-10">
+      <div className="w-full max-w-3xl rounded-[32px] border border-rose-200 bg-white p-6 shadow-2xl">
+        <p className="mini-heading text-rose-700">Critical Alert</p>
+        <h2 className="mt-3 text-3xl font-semibold text-slate-950">
+          {patientId} needs immediate review.
+        </h2>
+        <p className="mt-4 text-base leading-7 text-slate-700">{alert.summary}</p>
+        <p className="mt-3 text-sm leading-6 text-slate-600">{alert.detail}</p>
+        <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-rose-700">
+          Click below to jump directly to the triggering record.
+        </p>
+
+        <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+          <button type="button" className="btn btn-primary flex-1" onClick={onOpen}>
+            Open Critical Alert
+          </button>
+          <button type="button" className="btn btn-secondary flex-1" onClick={onDismiss}>
+            Dismiss For Now
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DoctorCriticalAlertCallout({
+  patientId,
+  alert,
+  onOpen,
+  className = "",
+}: {
+  patientId: string;
+  alert: DoctorCriticalAlertTarget;
+  onOpen: () => void;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      className={`w-full rounded-[28px] border border-rose-200 bg-rose-50 px-5 py-5 text-left shadow-sm transition hover:border-rose-300 hover:bg-rose-100 ${className}`}
+      onClick={onOpen}
+    >
+      <p className="text-xs font-semibold uppercase tracking-[0.3em] text-rose-700">
+        Critical Alert
+      </p>
+      <h3 className="mt-3 text-2xl font-semibold text-rose-950">
+        {patientId} requires immediate clinical attention.
+      </h3>
+      <p className="mt-3 text-sm leading-6 text-rose-900">{alert.summary}</p>
+      <p className="mt-2 text-sm leading-6 text-rose-800">{alert.detail}</p>
+      <p className="mt-4 text-sm font-semibold text-rose-900">Click to open the triggering record.</p>
+    </button>
+  );
+}
+
+function getDoctorCriticalAlert(
+  entries: EmotionRecord[],
+  dailyReports: DailyReportRecord[],
+  screenings: WeeklyScreeningRecord[],
+  observations: ObservationRecord[],
+): DoctorCriticalAlertTarget | null {
+  const candidates: Array<DoctorCriticalAlertTarget & { sortTime: number }> = [];
+
+  for (const entry of entries) {
+    if (entry.crisisLevel !== "critical") {
+      continue;
+    }
+
+    candidates.push({
+      summary: entry.crisisSummary ?? "A patient check-in includes critical safety language.",
+      detail: `Triggered by a ${entry.emotion.toLowerCase()} check-in recorded on ${format(
+        new Date(entry.timestamp),
+        "MMM d, yyyy 'at' h:mm a",
+      )}.`,
+      targetId: `doctor-entry-${entry.id}`,
+      timestamp: entry.timestamp,
+      sortTime: new Date(entry.timestamp).getTime(),
+    });
+  }
+
+  for (const report of dailyReports) {
+    if (report.crisisLevel !== "critical") {
+      continue;
+    }
+
+    candidates.push({
+      summary: report.crisisSummary ?? "A sleep or meals report includes critical safety language.",
+      detail: `Triggered by a ${report.reportType} report recorded on ${format(
+        new Date(report.timestamp),
+        "MMM d, yyyy 'at' h:mm a",
+      )}.`,
+      targetId: `doctor-report-${report.id}`,
+      timestamp: report.timestamp,
+      sortTime: new Date(report.timestamp).getTime(),
+    });
+  }
+
+  for (const screening of screenings) {
+    if (screening.crisisLevel !== "critical") {
+      continue;
+    }
+
+    candidates.push({
+      summary:
+        screening.crisisSummary ??
+        "The weekly screen shows a current need for immediate safety support.",
+      detail: `Triggered by a weekly screen recorded on ${format(
+        new Date(screening.timestamp),
+        "MMM d, yyyy 'at' h:mm a",
+      )}.`,
+      targetId: `doctor-screening-${screening.id}`,
+      timestamp: screening.timestamp,
+      sortTime: new Date(screening.timestamp).getTime(),
+    });
+  }
+
+  for (const observation of observations) {
+    if (observation.priority !== "Critical") {
+      continue;
+    }
+
+    candidates.push({
+      summary: observation.observation,
+      detail: `A critical ${observation.observationType.toLowerCase()} note was recorded on ${format(
+        new Date(observation.timestamp),
+        "MMM d, yyyy 'at' h:mm a",
+      )}.`,
+      targetId: `doctor-observation-${observation.id}`,
+      timestamp: observation.timestamp,
+      sortTime: new Date(observation.timestamp).getTime(),
+    });
+  }
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  return candidates.sort((left, right) => right.sortTime - left.sortTime)[0];
 }
 
 function getRevisionEntityLabel(entityType: EntryRevisionRecord["entityType"]) {

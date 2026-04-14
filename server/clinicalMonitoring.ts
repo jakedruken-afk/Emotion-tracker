@@ -31,6 +31,8 @@ const criticalPatterns = [
 
 const passivePatterns = [
   /\b(don'?t|do not|didn'?t|did not) want to be here\b/,
+  /\b(don'?t|do not|didn'?t|did not) feel like being on (this )?(earth|world)( anymore)?\b/,
+  /\b(don'?t|do not|didn'?t|did not) want to be on (this )?(earth|world)( anymore)?\b/,
   /\bwish(?:ed)? (i|they) (wasn'?t|weren'?t) here\b/,
   /\bfeel(?:ing)? like i (don'?t|do not|didn'?t|did not) want to be here\b/,
   /\bthoughts? about harming myself\b/,

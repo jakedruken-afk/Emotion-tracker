@@ -57,6 +57,11 @@ function runCrisisDetectorChecks() {
       expected: "critical",
     },
     {
+      label: "plain-language not wanting to be on earth is high",
+      text: "i dont feel like being on earth anymore",
+      expected: "high",
+    },
+    {
       label: "quoted third-party language stays unflagged",
       text: "My friend said they do not belong on this earth anymore.",
       expected: "none",
