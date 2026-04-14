@@ -4,12 +4,9 @@ import type {
   DailyReportRecord,
   EmotionLog,
   MedicationRecord,
+  ObservationRecord,
   WeeklyScreeningRecord,
 } from "@shared/contracts";
-import {
-  getLatestWeeklyScreening,
-  getWeeklyScreeningDisposition,
-} from "@shared/weeklyScreening";
 import { buildClinicianSummary, getReviewSignals } from "./clinicianSummary";
 import { buildWeeklyPatientReview, type PatientRiskSnapshot } from "./riskReview";
 
@@ -18,6 +15,7 @@ type DoctorReviewInput = {
   logs: EmotionLog[];
   dailyReports: DailyReportRecord[];
   screenings: WeeklyScreeningRecord[];
+  observations: ObservationRecord[];
   medications: MedicationRecord[];
   carePlan: CarePlanRecord | null;
   risk: PatientRiskSnapshot;
@@ -29,53 +27,62 @@ export function buildDoctorVisitSummary(input: DoctorReviewInput) {
     input.logs,
     input.dailyReports,
     input.screenings,
+    input.observations,
   );
-  const activeMedicationCount = input.medications.filter((medication) => medication.isActive).length;
-  const carePlanUpdatedText = input.carePlan
-    ? `Care plan last updated by ${input.carePlan.updatedBy} on ${format(new Date(input.carePlan.updatedAt), "MMM d, yyyy 'at' h:mm a")}.`
-    : "No clinician care plan has been added yet.";
+  const activeMedications = input.medications.filter((medication) => medication.isActive);
+  const carePlanText = input.carePlan
+    ? `Care plan updated by ${input.carePlan.updatedBy} on ${format(
+        new Date(input.carePlan.updatedAt),
+        "MMM d, yyyy 'at' h:mm a",
+      )}.`
+    : "No clinician care plan is on file.";
+  const medicationText =
+    activeMedications.length > 0
+      ? `${activeMedications.length} active medication${
+          activeMedications.length === 1 ? "" : "s"
+        } are listed.`
+      : "No active medications are listed.";
 
-  return `${baseSummary} ${activeMedicationCount} active medication${activeMedicationCount === 1 ? "" : "s"} are listed. ${carePlanUpdatedText}`;
+  return `${baseSummary} ${medicationText} ${carePlanText}`;
 }
 
 export function buildDoctorQuestions(input: DoctorReviewInput) {
   const questions = new Set<string>();
-  const reviewSignals = getReviewSignals(input.logs, input.dailyReports, input.screenings);
   const weeklyReview = buildWeeklyPatientReview(
     input.patientId,
     input.logs,
     input.dailyReports,
     input.screenings,
+    input.observations,
   );
-  const latestScreening = getLatestWeeklyScreening(input.screenings);
+  const reviewSignals = getReviewSignals(
+    input.logs,
+    input.dailyReports,
+    input.screenings,
+    input.observations,
+  );
   const activeMedications = input.medications.filter((medication) => medication.isActive);
 
-  if (latestScreening) {
-    const disposition = getWeeklyScreeningDisposition(latestScreening);
+  if (input.risk.crisisLevel === "critical") {
+    questions.add("Ask directly about current safety, intent, means, and what immediate support is needed today.");
+  } else if (input.risk.crisisLevel === "high") {
+    questions.add("Ask whether the patient feels safe today and what changed around the recent safety language.");
+  }
 
-    if (disposition === "urgent" || disposition === "positive") {
-      questions.add("Ask directly about current safety, suicidal thoughts, and what support is needed today.");
-    }
-
-    if (latestScreening.needsHelpStayingSafe) {
-      questions.add("Ask what would help the patient stay safe today and whether the current safety plan is enough.");
-    }
-  } else {
-    questions.add("Ask why the weekly safety screen has not been completed and whether it should be done during this visit.");
+  if (input.risk.whatChanged.some((change) => change.toLowerCase().includes("stress"))) {
+    questions.add("Ask what drove the recent stress increase and whether it has changed function, routine, or risk.");
   }
 
   if (
-    reviewSignals.some((signal) => signal.toLowerCase().includes("sleep")) ||
-    input.logs.some((log) => (log.sleepHours ?? 24) <= 4)
+    input.risk.whatChanged.some(
+      (change) => change.toLowerCase().includes("sleep") || change.toLowerCase().includes("wake"),
+    )
   ) {
-    questions.add("Ask how sleep has changed, what is waking the patient, and how poor sleep affects daytime functioning.");
+    questions.add("Ask how sleep has changed, what is breaking sleep, and whether poor sleep is worsening symptoms during the day.");
   }
 
-  if (
-    input.logs.some((log) => (log.cravingLevel ?? 0) >= 7) ||
-    input.logs.some((log) => log.substanceUseToday)
-  ) {
-    questions.add("Ask about cravings, recent substance use, triggers, access, and what happened before the higher-risk days.");
+  if (input.risk.whatChanged.some((change) => change.toLowerCase().includes("meal"))) {
+    questions.add("Ask what is getting in the way of eating regularly and whether appetite, nausea, stress, or substance use is involved.");
   }
 
   if (
@@ -85,19 +92,19 @@ export function buildDoctorQuestions(input: DoctorReviewInput) {
     ) ||
     activeMedications.length > 0
   ) {
-    questions.add("Ask whether medications are being taken as intended, whether side effects are present, and whether refills or changes are needed.");
+    questions.add("Ask whether medications are being taken as intended, which doses are being missed, and whether side effects, cost, or access are barriers.");
   }
 
-  if (input.logs.some((log) => log.moneyChangedToday && (log.cravingLevel ?? 0) >= 7)) {
-    questions.add("Ask whether money-related events are lining up with cravings, use, or routine changes.");
-  }
-
-  if (input.carePlan?.triggers) {
-    questions.add("Ask whether the known triggers in the care plan have happened recently and how the patient responded.");
+  if (input.risk.mismatchLevel !== "none") {
+    questions.add("Ask about the difference between patient self-report and recent support observations so the current picture can be clarified.");
   }
 
   if (input.carePlan?.goals) {
-    questions.add("Ask what progress has been made toward the current care goals since the last review.");
+    questions.add("Ask what progress has been made toward the current care-plan goals since the last review.");
+  }
+
+  for (const signal of reviewSignals.slice(0, 2)) {
+    questions.add(`Clarify this recent signal: ${signal}`);
   }
 
   for (const action of weeklyReview.suggestedActions) {
@@ -105,7 +112,7 @@ export function buildDoctorQuestions(input: DoctorReviewInput) {
   }
 
   if (questions.size === 0) {
-    questions.add("Ask what has changed most for the patient since the last visit.");
+    questions.add("Ask what has changed most since the last visit and what the patient needs help with next.");
   }
 
   return Array.from(questions).slice(0, 6);

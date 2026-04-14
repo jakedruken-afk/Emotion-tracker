@@ -26,6 +26,7 @@ import {
   type DailyReportRecord,
   type EmotionLog,
   type EmotionName,
+  type ObservationRecord,
   type ObservationPriority,
   type ObservationType,
   type PatientSummary,
@@ -104,6 +105,7 @@ const priorityMeta: Record<ObservationPriority, string> = {
   Low: "bg-sky-100 text-sky-800",
   Medium: "bg-amber-100 text-amber-800",
   High: "bg-orange-100 text-orange-900",
+  Critical: "bg-rose-100 text-rose-900",
   Urgent: "bg-rose-100 text-rose-900",
 };
 
@@ -126,7 +128,7 @@ const riskMeta: Record<
     badgeClass: "bg-orange-100 text-orange-900",
     cardClass: "border-orange-200 bg-orange-50/80",
   },
-  Urgent: {
+  Critical: {
     badgeClass: "bg-rose-100 text-rose-900",
     cardClass: "border-rose-200 bg-rose-50/80",
   },
@@ -163,6 +165,7 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
   const [logs, setLogs] = useState<EmotionLog[]>([]);
   const [dailyReports, setDailyReports] = useState<DailyReportRecord[]>([]);
   const [screenings, setScreenings] = useState<WeeklyScreeningRecord[]>([]);
+  const [observations, setObservations] = useState<ObservationRecord[]>([]);
   const [isLoadingLogs, setIsLoadingLogs] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [emotionFilter, setEmotionFilter] = useState<EmotionName | "all">("all");
@@ -183,16 +186,19 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
     setIsLoadingLogs(true);
 
     try {
-      const [nextPatients, nextLogs, nextDailyReports, nextScreenings] = await Promise.all([
+      const [nextPatients, nextLogs, nextDailyReports, nextScreenings, nextObservations] =
+        await Promise.all([
         apiRequest<PatientSummary[]>("/api/patients"),
         apiRequest<EmotionLog[]>("/api/logs"),
         apiRequest<DailyReportRecord[]>("/api/daily-reports"),
         apiRequest<WeeklyScreeningRecord[]>("/api/weekly-screenings"),
-      ]);
+          apiRequest<ObservationRecord[]>("/api/observations"),
+        ]);
       setPatients(nextPatients);
       setLogs(nextLogs);
       setDailyReports(nextDailyReports);
       setScreenings(nextScreenings);
+      setObservations(nextObservations);
     } catch (error) {
       toast({
         title: "Could not load the patient dashboard",
@@ -222,6 +228,7 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
       ...logs.map((log) => log.patientId),
       ...dailyReports.map((report) => report.patientId),
       ...screenings.map((screening) => screening.patientId),
+      ...observations.map((observation) => observation.patientId),
     ]),
   ).sort();
   const patientNameById = new Map(
@@ -257,12 +264,19 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
   const selectedPatientAllScreenings = screenings.filter(
     (screening) => screening.patientId === selectedPatientId,
   );
+  const selectedPatientAllObservations = observations.filter(
+    (observation) => observation.patientId === selectedPatientId,
+  );
   const selectedPatientDailyReports = dailyReports.filter(
     (report) => report.patientId === selectedPatientId && isWithinTimeRange(report.timestamp),
   );
   const selectedPatientScreenings = screenings.filter(
     (screening) =>
       screening.patientId === selectedPatientId && isWithinTimeRange(screening.timestamp),
+  );
+  const selectedPatientObservations = observations.filter(
+    (observation) =>
+      observation.patientId === selectedPatientId && isWithinTimeRange(observation.timestamp),
   );
   const selectedPatientMorningReports = selectedPatientDailyReports.filter(
     (report) => report.reportType === "morning",
@@ -336,17 +350,24 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
     selectedPatientLogs,
     selectedPatientDailyReports,
     selectedPatientScreenings,
+    selectedPatientObservations,
   );
   const clinicianSummary = buildClinicianSummary(
     selectedPatientId,
     selectedPatientAllLogs,
     selectedPatientAllDailyReports,
     selectedPatientAllScreenings,
+    selectedPatientAllObservations,
   );
   const averageSleepDuration = getAverageSleepDuration(selectedPatientMorningReports);
   const averageSleepQuality = getAverageSleepQuality(selectedPatientMorningReports);
   const averageWakeUps = getAverageWakeUps(selectedPatientMorningReports);
-  const patientRiskSnapshots = buildPatientRiskSnapshots(logs, dailyReports, screenings);
+  const patientRiskSnapshots = buildPatientRiskSnapshots(
+    logs,
+    dailyReports,
+    screenings,
+    observations,
+  );
   const selectedPatientRisk =
     patientRiskSnapshots.find((snapshot) => snapshot.patientId === selectedPatientId) ?? null;
   const weeklyReview = buildWeeklyPatientReview(
@@ -354,13 +375,14 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
     selectedPatientAllLogs,
     selectedPatientAllDailyReports,
     selectedPatientAllScreenings,
+    selectedPatientAllObservations,
   );
   const screeningActions = Array.from(
     new Set([screeningReviewAction, ...weeklyReview.suggestedActions]),
   );
   const focusRisk = selectedPatientRisk ?? weeklyReview.risk;
-  const urgentPatients = patientRiskSnapshots.filter(
-    (snapshot) => snapshot.riskLevel === "Urgent",
+  const criticalPatients = patientRiskSnapshots.filter(
+    (snapshot) => snapshot.riskLevel === "Critical",
   ).length;
   const highPatients = patientRiskSnapshots.filter(
     (snapshot) => snapshot.riskLevel === "High",
@@ -547,7 +569,7 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
       id: "queue",
       label: "Priority Queue",
       description: "Ranked follow-up view",
-      badge: urgentPatients > 0 ? urgentPatients : patientRiskSnapshots.length,
+      badge: criticalPatients > 0 ? criticalPatients : patientRiskSnapshots.length,
     },
     {
       id: "screening",
@@ -555,7 +577,7 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
       description: "Weekly screening and follow-up",
       badge:
         screeningDisposition === "urgent"
-          ? "Urgent"
+          ? "Critical"
           : screeningDisposition === "positive"
             ? "Alert"
             : screeningDue
@@ -634,7 +656,7 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
               <MetricTile
                 label="Patients tracked"
                 value={patientRiskSnapshots.length}
-                detail={`${urgentPatients} urgent and ${highPatients} high priority right now.`}
+                detail={`${criticalPatients} critical and ${highPatients} high priority right now.`}
                 tone="sky"
               />
               <MetricTile
@@ -793,21 +815,67 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
                     <span className="badge bg-white text-slate-700">
                       Dominant mood: {focusRisk.dominantEmotion ?? "None"}
                     </span>
+                    <span className="badge bg-slate-100 text-slate-700">
+                      Reliability: {focusRisk.reliabilityLevel}
+                    </span>
+                    {focusRisk.mismatchSummary ? (
+                      <span className="badge bg-amber-100 text-amber-900">
+                        Perspective mismatch
+                      </span>
+                    ) : null}
+                    {focusRisk.crisisLevel !== "none" ? (
+                      <span className="badge bg-rose-100 text-rose-900">
+                        {focusRisk.crisisLevel === "critical" ? "Critical safety alert" : "Safety alert"}
+                      </span>
+                    ) : null}
                   </div>
 
-                  <div className="mt-5 space-y-3">
-                    <p className="text-sm font-semibold text-slate-900">
-                      Why this patient is ranked here
-                    </p>
-                    {focusRisk.reasons.length > 0 ? (
-                      focusRisk.reasons.map((reason) => (
-                        <div key={reason} className="timeline-card text-sm text-slate-700">
-                          {reason}
-                        </div>
-                      ))
-                    ) : (
-                      <EmptyPanel message="No major review reason was detected yet." />
-                    )}
+                  <div className="mt-5 grid gap-4">
+                    <div className="timeline-card">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        What is happening?
+                      </p>
+                      <p className="mt-2 text-sm leading-6 text-slate-700">
+                        {focusRisk.whatChanged.length > 0
+                          ? focusRisk.whatChanged.join(" ")
+                          : "No major change signal was detected this week."}
+                      </p>
+                    </div>
+                    <div className="timeline-card">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        How serious is it?
+                      </p>
+                      <p className="mt-2 text-sm leading-6 text-slate-700">
+                        {focusRisk.riskLevel} priority.
+                        {focusRisk.crisisSummary ? ` ${focusRisk.crisisSummary}` : ""}
+                      </p>
+                    </div>
+                    <div className="timeline-card">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        Why is it happening?
+                      </p>
+                      <p className="mt-2 text-sm leading-6 text-slate-700">
+                        {focusRisk.reasons.length > 0
+                          ? focusRisk.reasons.join(" ")
+                          : "No major review reason was detected yet."}
+                      </p>
+                    </div>
+                    <div className="timeline-card">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        What should the doctor do?
+                      </p>
+                      <p className="mt-2 text-sm leading-6 text-slate-700">
+                        {focusRisk.suggestedActions.join(" ")}
+                      </p>
+                    </div>
+                    {focusRisk.mismatchSummary ? (
+                      <div className="rounded-[24px] border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
+                        {focusRisk.mismatchSummary}
+                      </div>
+                    ) : null}
+                    <div className="rounded-[24px] border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-700">
+                      {focusRisk.reliabilitySummary}
+                    </div>
                   </div>
                 </section>
 
@@ -1732,8 +1800,8 @@ function QueueCard({
         </div>
 
         <div className="mt-4 flex flex-wrap gap-2">
-          {snapshot.reasons.length > 0 ? (
-            snapshot.reasons.slice(0, 3).map((reason) => (
+          {snapshot.whatChanged.length > 0 ? (
+            snapshot.whatChanged.slice(0, 2).map((reason) => (
               <span key={`${snapshot.patientId}-${reason}`} className="badge bg-white/85 text-slate-700">
                 {reason}
               </span>
@@ -1742,6 +1810,24 @@ function QueueCard({
             <span className="text-sm text-slate-500">No major review reason detected.</span>
           )}
         </div>
+
+        <div className="mt-4 flex flex-wrap gap-2">
+          <span className="badge bg-white/85 text-slate-700">
+            Reliability {snapshot.reliabilityLevel}
+          </span>
+          {snapshot.mismatchSummary ? (
+            <span className="badge bg-amber-100 text-amber-900">Mismatch flagged</span>
+          ) : null}
+          {snapshot.crisisLevel !== "none" ? (
+            <span className="badge bg-rose-100 text-rose-900">
+              {snapshot.crisisLevel === "critical" ? "Critical alert" : "Safety alert"}
+            </span>
+          ) : null}
+        </div>
+
+        <p className="mt-4 text-sm text-slate-700">
+          {snapshot.suggestedActions[0] ?? "Continue routine monitoring."}
+        </p>
 
         <p className="mt-4 text-xs text-slate-500">
           {snapshot.lastSeenAt

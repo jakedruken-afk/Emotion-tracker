@@ -53,7 +53,7 @@ export function getWeeklyScreeningDispositionLabel(
 ) {
   switch (disposition) {
     case "urgent":
-      return "Urgent safety review";
+      return "Critical safety review";
     case "positive":
       return "Positive safety screen";
     case "history":
@@ -68,13 +68,13 @@ export function getWeeklyScreeningRecommendedAction(
 ) {
   switch (disposition) {
     case "urgent":
-      return "Immediate mental health evaluation and do not leave the patient alone.";
+      return "Immediate safety review and same-day clinical assessment.";
     case "positive":
-      return "Same-day brief suicide safety assessment and safety planning.";
+      return "Same-day safety assessment and updated follow-up plan.";
     case "history":
-      return "Review past suicidal behavior and confirm current supports.";
+      return "Review past safety history and confirm current supports.";
     default:
-      return "No urgent suicide follow-up identified from this screen.";
+      return "No immediate safety escalation identified from this screen.";
   }
 }
 
@@ -145,22 +145,22 @@ export function getWeeklyScreeningSignals(
   const signals: string[] = [];
 
   if (screening.currentThoughts) {
-    signals.push("Current suicidal thoughts reported");
+    signals.push("Current thoughts about self-harm reported");
   }
 
   if (screening.thoughtsKillingSelf) {
     signals.push(
       screening.thoughtsKillingSelfFrequency
-        ? `Recent thoughts about killing self were reported ${weeklyScreeningFrequencyLabels[screening.thoughtsKillingSelfFrequency].toLowerCase()} this week`
-        : "Recent thoughts about killing self",
+        ? `Recent thoughts about self-harm were reported ${weeklyScreeningFrequencyLabels[screening.thoughtsKillingSelfFrequency].toLowerCase()} this week`
+        : "Recent thoughts about self-harm",
     );
   }
 
   if (screening.everTriedToKillSelf) {
     signals.push(
       screening.attemptTiming === "within_year"
-        ? "Past suicide attempt within the last year"
-        : "Past suicide attempt reported",
+        ? "Past serious self-harm attempt within the last year"
+        : "Past serious self-harm attempt reported",
     );
   }
 
@@ -236,7 +236,7 @@ export function getWeeklyScreeningFollowUpDetails(
 
   if (screening.thoughtsKillingSelf && screening.thoughtsKillingSelfFrequency) {
     details.push(
-      `Thoughts about killing self: ${weeklyScreeningFrequencyLabels[screening.thoughtsKillingSelfFrequency]}`,
+      `Thoughts about self-harm: ${weeklyScreeningFrequencyLabels[screening.thoughtsKillingSelfFrequency]}`,
     );
   }
 

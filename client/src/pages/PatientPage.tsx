@@ -24,12 +24,15 @@ import {
   formatDisplayName,
   medicationAdherenceLabels,
   medicationAdherenceOptions,
+  missedMedicationReasonLabels,
+  missedMedicationReasonOptions,
   type AuthUser,
   type ConsentRecord,
   type DailyReportRecord,
   type EmotionName,
   type EmotionRecord,
   type MedicationAdherence,
+  type MissedMedicationReason,
   type SleepQuality,
   type WeeklyScreeningRecord,
 } from "@shared/contracts";
@@ -43,7 +46,7 @@ import PatientWeeklyScreenWorkspace, {
 const patientTabs = [
   {
     id: "mood",
-    label: "Mood Check-In",
+    label: "Daily Check-In",
     description: "Record how you feel right now",
   },
   {
@@ -81,6 +84,8 @@ type MorningReportFormState = {
 
 type NightReportFormState = {
   bedTime: string;
+  mealsCount: string;
+  mealsNote: string;
   notes: string;
 };
 
@@ -105,6 +110,8 @@ function createEmptyMorningReport(): MorningReportFormState {
 function createEmptyNightReport(): NightReportFormState {
   return {
     bedTime: "",
+    mealsCount: "",
+    mealsNote: "",
     notes: "",
   };
 }
@@ -148,6 +155,44 @@ function createEmptyWeeklyScreening(): WeeklyScreeningFormState {
   };
 }
 
+function createWeeklyScreeningForm(
+  screening: WeeklyScreeningRecord,
+): WeeklyScreeningFormState {
+  return {
+    wishedDead: screening.wishedDead,
+    familyBetterOffDead: screening.familyBetterOffDead,
+    thoughtsKillingSelf: screening.thoughtsKillingSelf,
+    thoughtsKillingSelfFrequency: screening.thoughtsKillingSelfFrequency ?? "",
+    everTriedToKillSelf: screening.everTriedToKillSelf,
+    attemptTiming: screening.attemptTiming,
+    currentThoughts:
+      screening.currentThoughts == null ? "" : screening.currentThoughts ? "yes" : "no",
+    depressedHardToFunction: screening.depressedHardToFunction,
+    depressedFrequency: screening.depressedFrequency ?? "",
+    anxiousOnEdge: screening.anxiousOnEdge,
+    anxiousFrequency: screening.anxiousFrequency ?? "",
+    hopeless: screening.hopeless,
+    couldNotEnjoyThings: screening.couldNotEnjoyThings,
+    keepingToSelf: screening.keepingToSelf,
+    moreIrritable: screening.moreIrritable,
+    substanceUseMoreThanUsual: screening.substanceUseMoreThanUsual,
+    substanceUseFrequency: screening.substanceUseFrequency ?? "",
+    sleepTrouble: screening.sleepTrouble,
+    sleepTroubleFrequency: screening.sleepTroubleFrequency ?? "",
+    appetiteChange: screening.appetiteChange,
+    appetiteChangeDirection: screening.appetiteChangeDirection ?? "",
+    supportPerson: screening.supportPerson ?? "",
+    reasonsForLiving: screening.reasonsForLiving ?? "",
+    copingPlan: screening.copingPlan ?? "",
+    needsHelpStayingSafe:
+      screening.needsHelpStayingSafe == null
+        ? ""
+        : screening.needsHelpStayingSafe
+          ? "yes"
+          : "no",
+  };
+}
+
 export default function PatientPage({ user, onLogout }: PatientPageProps) {
   const patientId = user.username;
   const [activeTab, setActiveTab] = useState<PatientWorkspace>("mood");
@@ -160,6 +205,9 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
   const [moneyChangedToday, setMoneyChangedToday] = useState(false);
   const [medicationAdherence, setMedicationAdherence] =
     useState<MedicationAdherence>("not_prescribed");
+  const [missedMedicationName, setMissedMedicationName] = useState("");
+  const [missedMedicationReason, setMissedMedicationReason] =
+    useState<MissedMedicationReason | "">("");
   const [includeLocation, setIncludeLocation] = useState(false);
   const [locationFeedback, setLocationFeedback] = useState<string | null>(null);
   const [consent, setConsent] = useState<ConsentRecord | null>(null);
@@ -180,6 +228,10 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
   const [weeklyScreening, setWeeklyScreening] = useState<WeeklyScreeningFormState>(
     createEmptyWeeklyScreening,
   );
+  const [editingEmotionId, setEditingEmotionId] = useState<number | null>(null);
+  const [editingMorningReportId, setEditingMorningReportId] = useState<number | null>(null);
+  const [editingNightReportId, setEditingNightReportId] = useState<number | null>(null);
+  const [editingWeeklyScreeningId, setEditingWeeklyScreeningId] = useState<number | null>(null);
   const [isSavingMorningReport, setIsSavingMorningReport] = useState(false);
   const [isSavingNightReport, setIsSavingNightReport] = useState(false);
   const [isSavingWeeklyScreening, setIsSavingWeeklyScreening] = useState(false);
@@ -243,6 +295,7 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
   }, [consent?.gpsTracking]);
 
   const resetMoodForm = () => {
+    setEditingEmotionId(null);
     setSelectedEmotion(null);
     setNotes("");
     setSleepHours(8);
@@ -251,11 +304,41 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
     setSubstanceUseToday(false);
     setMoneyChangedToday(false);
     setMedicationAdherence("not_prescribed");
+    setMissedMedicationName("");
+    setMissedMedicationReason("");
     setLocationFeedback(null);
+  };
+
+  const resetMorningReportForm = () => {
+    setEditingMorningReportId(null);
+    setMorningReport(createEmptyMorningReport());
+  };
+
+  const resetNightReportForm = () => {
+    setEditingNightReportId(null);
+    setNightReport(createEmptyNightReport());
+  };
+
+  const resetWeeklyScreeningForm = () => {
+    setEditingWeeklyScreeningId(null);
+    setWeeklyScreening(createEmptyWeeklyScreening());
   };
 
   const handleSubmit = async () => {
     if (!selectedEmotion) {
+      return;
+    }
+
+    if (
+      medicationAdherence === "missed_some" &&
+      (missedMedicationName.trim().length === 0 || missedMedicationReason === "")
+    ) {
+      toast({
+        title: "Add the missed medication details",
+        description:
+          "When you choose 'Missed some', please tell us which medication was missed and why.",
+        variant: "info",
+      });
       return;
     }
 
@@ -284,10 +367,14 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
         setLocationFeedback(null);
       }
 
-      await apiRequest<EmotionRecord>("/api/emotions", {
-        method: "POST",
+      const method = editingEmotionId != null ? "PATCH" : "POST";
+      const url =
+        editingEmotionId != null ? `/api/emotions/${editingEmotionId}` : "/api/emotions";
+
+      await apiRequest<EmotionRecord>(url, {
+        method,
         data: {
-          patientId,
+          ...(editingEmotionId == null ? { patientId } : {}),
           emotion: selectedEmotion,
           notes,
           sleepHours,
@@ -296,16 +383,26 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
           substanceUseToday,
           moneyChangedToday,
           medicationAdherence,
+          missedMedicationName:
+            medicationAdherence === "missed_some" ? missedMedicationName : null,
+          missedMedicationReason:
+            medicationAdherence === "missed_some" ? missedMedicationReason || null : null,
           ...locationPayload,
         },
       });
 
+      const wasEditing = editingEmotionId != null;
+
       resetMoodForm();
       toast({
-        title: "Feeling saved",
+        title: wasEditing ? "Check-in updated" : "Feeling saved",
         description: locationCaptured
-          ? "Your latest emotion check-in and location have been recorded."
-          : "Your latest emotion check-in has been recorded.",
+          ? wasEditing
+            ? "Your updated check-in and location have been recorded."
+            : "Your latest check-in and location have been recorded."
+          : wasEditing
+            ? "Your check-in changes have been saved."
+            : "Your latest check-in has been recorded.",
         variant: "success",
       });
 
@@ -349,10 +446,14 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
     setIsSavingMorningReport(true);
 
     try {
-      await apiRequest<DailyReportRecord>("/api/daily-reports", {
-        method: "POST",
+      const wasEditing = editingMorningReportId != null;
+
+      await apiRequest<DailyReportRecord>(
+        wasEditing ? `/api/daily-reports/${editingMorningReportId}` : "/api/daily-reports",
+        {
+          method: wasEditing ? "PATCH" : "POST",
         data: {
-          patientId,
+          ...(wasEditing ? {} : { patientId }),
           reportType: "morning",
           bedTime: morningReport.bedTime,
           wakeTime: morningReport.wakeTime,
@@ -363,14 +464,19 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
             morningReport.feltRested === ""
               ? null
               : morningReport.feltRested === "yes",
+          mealsCount: null,
+          mealsNote: null,
           notes: morningReport.notes,
         },
-      });
+        },
+      );
 
-      setMorningReport(createEmptyMorningReport());
+      resetMorningReportForm();
       toast({
-        title: "Morning report saved",
-        description: "Your sleep check-in has been added.",
+        title: wasEditing ? "Morning report updated" : "Morning report saved",
+        description: wasEditing
+          ? "Your morning report changes have been saved."
+          : "Your sleep check-in has been added.",
         variant: "success",
       });
       await loadPatientData();
@@ -397,27 +503,45 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
       return;
     }
 
+    if (nightReport.mealsCount.trim().length === 0) {
+      toast({
+        title: "Please add your meals",
+        description: "Enter how many meals you had today before saving the night report.",
+        variant: "info",
+      });
+      return;
+    }
+
     setIsSavingNightReport(true);
 
     try {
-      await apiRequest<DailyReportRecord>("/api/daily-reports", {
-        method: "POST",
+      const wasEditing = editingNightReportId != null;
+
+      await apiRequest<DailyReportRecord>(
+        wasEditing ? `/api/daily-reports/${editingNightReportId}` : "/api/daily-reports",
+        {
+          method: wasEditing ? "PATCH" : "POST",
         data: {
-          patientId,
+          ...(wasEditing ? {} : { patientId }),
           reportType: "night",
           bedTime: nightReport.bedTime,
           wakeTime: null,
           sleepQuality: null,
           wakeUps: null,
           feltRested: null,
+          mealsCount: Number(nightReport.mealsCount),
+          mealsNote: nightReport.mealsNote,
           notes: nightReport.notes,
         },
-      });
+        },
+      );
 
-      setNightReport(createEmptyNightReport());
+      resetNightReportForm();
       toast({
-        title: "Night report saved",
-        description: "Tonight's sleep plan has been added.",
+        title: wasEditing ? "Night report updated" : "Night report saved",
+        description: wasEditing
+          ? "Your night report changes have been saved."
+          : "Tonight's sleep plan has been added.",
         variant: "success",
       });
       await loadPatientData();
@@ -437,10 +561,15 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
     setIsSavingWeeklyScreening(true);
 
     try {
-      const savedScreening = await apiRequest<WeeklyScreeningRecord>("/api/weekly-screenings", {
-        method: "POST",
+      const wasEditing = editingWeeklyScreeningId != null;
+      const savedScreening = await apiRequest<WeeklyScreeningRecord>(
+        wasEditing
+          ? `/api/weekly-screenings/${editingWeeklyScreeningId}`
+          : "/api/weekly-screenings",
+        {
+          method: wasEditing ? "PATCH" : "POST",
         data: {
-          patientId,
+          ...(wasEditing ? {} : { patientId }),
           wishedDead: weeklyScreening.wishedDead,
           familyBetterOffDead: weeklyScreening.familyBetterOffDead,
           thoughtsKillingSelf: weeklyScreening.thoughtsKillingSelf,
@@ -493,16 +622,21 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
               ? null
               : weeklyScreening.needsHelpStayingSafe === "yes",
         },
-      });
+        },
+      );
 
       const disposition = getWeeklyScreeningDisposition(savedScreening);
 
-      setWeeklyScreening(createEmptyWeeklyScreening());
+      resetWeeklyScreeningForm();
       toast({
         title:
           disposition === "urgent"
-            ? "Weekly screen saved and needs urgent follow-up"
-            : "Weekly screen saved",
+            ? wasEditing
+              ? "Weekly screen updated and needs urgent follow-up"
+              : "Weekly screen saved and needs urgent follow-up"
+            : wasEditing
+              ? "Weekly screen updated"
+              : "Weekly screen saved",
         description: getWeeklyScreeningDispositionLabel(disposition),
         variant: disposition === "negative" ? "success" : "info",
       });
@@ -559,6 +693,61 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
     } finally {
       setIsSavingConsent(false);
     }
+  };
+
+  const handleEditEntry = (entry: EmotionRecord) => {
+    setEditingEmotionId(entry.id);
+    setSelectedEmotion(entry.emotion);
+    setNotes(entry.notes ?? "");
+    setSleepHours(entry.sleepHours ?? 8);
+    setStressLevel(entry.stressLevel ?? 5);
+    setCravingLevel(entry.cravingLevel ?? 0);
+    setSubstanceUseToday(entry.substanceUseToday ?? false);
+    setMoneyChangedToday(entry.moneyChangedToday ?? false);
+    setMedicationAdherence(entry.medicationAdherence ?? "not_prescribed");
+    setMissedMedicationName(entry.missedMedicationName ?? "");
+    setMissedMedicationReason(entry.missedMedicationReason ?? "");
+    setIncludeLocation(Boolean(entry.latitude != null && entry.longitude != null));
+    setLocationFeedback(
+      entry.latitude != null && entry.longitude != null
+        ? "This saved check-in already includes GPS. Saving again will refresh it if GPS is still enabled."
+        : null,
+    );
+    setActiveTab("mood");
+  };
+
+  const handleEditDailyReport = (report: DailyReportRecord) => {
+    if (report.reportType === "morning") {
+      setEditingMorningReportId(report.id);
+      setMorningReport({
+        bedTime: report.bedTime ?? "",
+        wakeTime: report.wakeTime ?? "",
+        sleepQuality: report.sleepQuality ?? "",
+        wakeUps: report.wakeUps == null ? "" : String(report.wakeUps),
+        feltRested:
+          report.feltRested == null ? "" : report.feltRested ? "yes" : "no",
+        notes: report.notes ?? "",
+      });
+      setEditingNightReportId(null);
+      setActiveTab("sleep");
+      return;
+    }
+
+    setEditingNightReportId(report.id);
+    setNightReport({
+      bedTime: report.bedTime ?? "",
+      mealsCount: report.mealsCount == null ? "" : String(report.mealsCount),
+      mealsNote: report.mealsNote ?? "",
+      notes: report.notes ?? "",
+    });
+    setEditingMorningReportId(null);
+    setActiveTab("sleep");
+  };
+
+  const handleEditScreening = (screening: WeeklyScreeningRecord) => {
+    setEditingWeeklyScreeningId(screening.id);
+    setWeeklyScreening(createWeeklyScreeningForm(screening));
+    setActiveTab("screening");
   };
 
   const latestEntry = entries[0];
@@ -713,11 +902,16 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
                   medicationAdherence={medicationAdherence}
                   medicationAdherenceOptions={medicationAdherenceOptions}
                   medicationAdherenceLabels={medicationAdherenceLabels}
+                  missedMedicationName={missedMedicationName}
+                  missedMedicationReason={missedMedicationReason}
+                  missedMedicationReasonOptions={missedMedicationReasonOptions}
+                  missedMedicationReasonLabels={missedMedicationReasonLabels}
                   includeLocation={includeLocation}
                   gpsConsentEnabled={Boolean(consent?.gpsTracking)}
                   locationFeedback={locationFeedback}
                   isSaving={isSaving}
                   isCapturingLocation={isCapturingLocation}
+                  editingEntryId={editingEmotionId}
                   recentEntries={entries.slice(0, 6)}
                   isLoadingEntries={isLoadingEntries}
                   morningSavedToday={morningSavedToday}
@@ -733,6 +927,8 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
                   onSubstanceUseTodayChange={setSubstanceUseToday}
                   onMoneyChangedTodayChange={setMoneyChangedToday}
                   onMedicationAdherenceChange={setMedicationAdherence}
+                  onMissedMedicationNameChange={setMissedMedicationName}
+                  onMissedMedicationReasonChange={setMissedMedicationReason}
                   onIncludeLocationChange={setIncludeLocation}
                   onSubmit={handleSubmit}
                   onReset={resetMoodForm}
@@ -754,10 +950,14 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
                   nightReport={nightReport}
                   isSavingMorningReport={isSavingMorningReport}
                   isSavingNightReport={isSavingNightReport}
+                  editingMorningReportId={editingMorningReportId}
+                  editingNightReportId={editingNightReportId}
                   onMorningReportChange={setMorningReport}
                   onNightReportChange={setNightReport}
                   onMorningReportSubmit={handleMorningReportSubmit}
                   onNightReportSubmit={handleNightReportSubmit}
+                  onCancelMorningEdit={resetMorningReportForm}
+                  onCancelNightEdit={resetNightReportForm}
                 />
               ) : null}
 
@@ -769,8 +969,10 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
                   form={weeklyScreening}
                   isSaving={isSavingWeeklyScreening}
                   isLoading={isLoadingScreenings}
+                  editingScreeningId={editingWeeklyScreeningId}
                   onChange={setWeeklyScreening}
                   onSubmit={handleWeeklyScreeningSubmit}
+                  onCancelEdit={resetWeeklyScreeningForm}
                 />
               ) : null}
 
@@ -782,6 +984,9 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
                   isLoadingEntries={isLoadingEntries}
                   isLoadingDailyReports={isLoadingDailyReports}
                   isLoadingScreenings={isLoadingScreenings}
+                  onEditEntry={handleEditEntry}
+                  onEditDailyReport={handleEditDailyReport}
+                  onEditScreening={handleEditScreening}
                 />
               ) : null}
             </div>

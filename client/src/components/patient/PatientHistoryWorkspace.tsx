@@ -18,6 +18,9 @@ type PatientHistoryWorkspaceProps = {
   isLoadingEntries: boolean;
   isLoadingDailyReports: boolean;
   isLoadingScreenings: boolean;
+  onEditEntry: (entry: EmotionRecord) => void;
+  onEditDailyReport: (report: DailyReportRecord) => void;
+  onEditScreening: (screening: WeeklyScreeningRecord) => void;
 };
 
 export default function PatientHistoryWorkspace({
@@ -27,6 +30,9 @@ export default function PatientHistoryWorkspace({
   isLoadingEntries,
   isLoadingDailyReports,
   isLoadingScreenings,
+  onEditEntry,
+  onEditDailyReport,
+  onEditScreening,
 }: PatientHistoryWorkspaceProps) {
   return (
     <div className="content-grid">
@@ -43,7 +49,14 @@ export default function PatientHistoryWorkspace({
           {isLoadingEntries ? (
             <EmptyState message="Loading your recent entries..." />
           ) : entries.length > 0 ? (
-            entries.map((entry) => <EmotionEntryCard key={entry.id} entry={entry} />)
+            entries.map((entry) => (
+              <div key={entry.id} className="space-y-3">
+                <EmotionEntryCard entry={entry} />
+                <button type="button" className="btn btn-secondary w-full" onClick={() => onEditEntry(entry)}>
+                  Edit This Check-In
+                </button>
+              </div>
+            ))
           ) : (
             <EmptyState message="No mood entries yet. Save your first mood check-in to build your history." />
           )}
@@ -61,13 +74,24 @@ export default function PatientHistoryWorkspace({
           </div>
 
           <div className="mt-5 space-y-4">
-            {isLoadingDailyReports ? (
-              <EmptyState message="Loading your sleep reports..." />
-            ) : dailyReports.length > 0 ? (
-              dailyReports.map((report) => <DailyReportCard key={report.id} report={report} />)
-            ) : (
-              <EmptyState message="No sleep reports yet. Save a morning or night report to build your history." />
-            )}
+          {isLoadingDailyReports ? (
+            <EmptyState message="Loading your sleep reports..." />
+          ) : dailyReports.length > 0 ? (
+            dailyReports.map((report) => (
+              <div key={report.id} className="space-y-3">
+                <DailyReportCard report={report} />
+                <button
+                  type="button"
+                  className="btn btn-secondary w-full"
+                  onClick={() => onEditDailyReport(report)}
+                >
+                  Edit This Report
+                </button>
+              </div>
+            ))
+          ) : (
+            <EmptyState message="No sleep reports yet. Save a morning or night report to build your history." />
+          )}
           </div>
         </section>
 
@@ -81,15 +105,24 @@ export default function PatientHistoryWorkspace({
           </div>
 
           <div className="mt-5 space-y-4">
-            {isLoadingScreenings ? (
-              <EmptyState message="Loading your weekly screens..." />
-            ) : screenings.length > 0 ? (
-              screenings.map((screening) => (
-                <WeeklyScreeningCard key={screening.id} screening={screening} />
-              ))
-            ) : (
-              <EmptyState message="No weekly safety screens yet. Save one to build your weekly screening history." />
-            )}
+          {isLoadingScreenings ? (
+            <EmptyState message="Loading your weekly screens..." />
+          ) : screenings.length > 0 ? (
+            screenings.map((screening) => (
+              <div key={screening.id} className="space-y-3">
+                <WeeklyScreeningCard screening={screening} />
+                <button
+                  type="button"
+                  className="btn btn-secondary w-full"
+                  onClick={() => onEditScreening(screening)}
+                >
+                  Edit This Weekly Screen
+                </button>
+              </div>
+            ))
+          ) : (
+            <EmptyState message="No weekly safety screens yet. Save one to build your weekly screening history." />
+          )}
           </div>
         </section>
 

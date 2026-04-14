@@ -57,8 +57,10 @@ type PatientWeeklyScreenWorkspaceProps = {
   form: WeeklyScreeningFormState;
   isSaving: boolean;
   isLoading: boolean;
+  editingScreeningId: number | null;
   onChange: (nextValue: WeeklyScreeningFormState) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onCancelEdit: () => void;
 };
 
 export default function PatientWeeklyScreenWorkspace({
@@ -68,8 +70,10 @@ export default function PatientWeeklyScreenWorkspace({
   form,
   isSaving,
   isLoading,
+  editingScreeningId,
   onChange,
   onSubmit,
+  onCancelEdit,
 }: PatientWeeklyScreenWorkspaceProps) {
   const latestDisposition = latestScreening
     ? getWeeklyScreeningDisposition(latestScreening)
@@ -87,7 +91,11 @@ export default function PatientWeeklyScreenWorkspace({
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="mini-heading">Weekly Screening</p>
-            <h3 className="section-title mt-3">One weekly safety and symptom check.</h3>
+            <h3 className="section-title mt-3">
+              {editingScreeningId != null
+                ? "Update the weekly safety and symptom check."
+                : "One weekly safety and symptom check."}
+            </h3>
             <p className="section-copy">
               This screen helps your care team notice changes that may need follow-up before the next visit.
             </p>
@@ -125,17 +133,17 @@ export default function PatientWeeklyScreenWorkspace({
             <p className="mini-heading">Safety Questions</p>
             <div className="mt-5 form-grid">
               <YesNoField
-                label="In the past few weeks, have you wished you were dead?"
+                label="In the past few weeks, have you felt like you did not want to be here?"
                 value={form.wishedDead}
                 onChange={(value) => onChange({ ...form, wishedDead: value })}
               />
               <YesNoField
-                label="In the past few weeks, have you felt your family would be better off if you were dead?"
+                label="In the past few weeks, have you felt other people might be better off without you?"
                 value={form.familyBetterOffDead}
                 onChange={(value) => onChange({ ...form, familyBetterOffDead: value })}
               />
               <YesNoField
-                label="In the past week, have you had thoughts about killing yourself?"
+                label="In the past week, have you had thoughts about harming yourself?"
                 value={form.thoughtsKillingSelf}
                 onChange={(value) =>
                   onChange({
@@ -200,7 +208,7 @@ export default function PatientWeeklyScreenWorkspace({
               form.thoughtsKillingSelf ||
               form.everTriedToKillSelf ? (
                 <div className="md:col-span-2">
-                  <Field label="Are you having thoughts of killing yourself right now?">
+                  <Field label="Are you having thoughts about harming yourself right now?">
                     <select
                       className="input"
                       value={form.currentThoughts}
@@ -388,7 +396,7 @@ export default function PatientWeeklyScreenWorkspace({
                 </Field>
               </div>
               <div className="md:col-span-2">
-                <Field label="What are some reasons you would not kill yourself? (optional)">
+                <Field label="What are some reasons you want to stay safe or keep going? (optional)">
                   <textarea
                     className="input min-h-28 resize-y"
                     value={form.reasonsForLiving}
@@ -433,9 +441,20 @@ export default function PatientWeeklyScreenWorkspace({
             </div>
           </div>
 
-          <button type="submit" className="btn btn-primary w-full" disabled={isSaving}>
-            {isSaving ? "Saving..." : "Save Weekly Screen"}
-          </button>
+          <div className="flex flex-col gap-3">
+            <button type="submit" className="btn btn-primary w-full" disabled={isSaving}>
+              {isSaving
+                ? "Saving..."
+                : editingScreeningId != null
+                  ? "Update Weekly Screen"
+                  : "Save Weekly Screen"}
+            </button>
+            {editingScreeningId != null ? (
+              <button type="button" className="btn btn-secondary w-full" onClick={onCancelEdit}>
+                Cancel Weekly Screen Edit
+              </button>
+            ) : null}
+          </div>
         </form>
       </section>
 
@@ -471,7 +490,7 @@ export default function PatientWeeklyScreenWorkspace({
 
           <div className="mt-5 space-y-3">
             <div className="rounded-[22px] border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
-              If you report current thoughts of killing yourself, staff should treat that as urgent.
+              If you report current thoughts about harming yourself, staff should treat that as immediate follow-up.
             </div>
             <div className="rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-700">
               Positive answers may lead to a same-day safety assessment, a safety plan, and a faster follow-up.

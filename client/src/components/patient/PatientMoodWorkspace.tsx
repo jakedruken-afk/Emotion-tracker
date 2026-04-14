@@ -4,6 +4,7 @@ import {
   type EmotionName,
   type EmotionRecord,
   type MedicationAdherence,
+  type MissedMedicationReason,
 } from "@shared/contracts";
 import type { ReactNode } from "react";
 import { getDailyReportStatusText } from "../../lib/dailyReports";
@@ -51,11 +52,16 @@ type MoodWorkspaceProps = {
   medicationAdherence: MedicationAdherence;
   medicationAdherenceOptions: readonly MedicationAdherence[];
   medicationAdherenceLabels: Record<MedicationAdherence, string>;
+  missedMedicationName: string;
+  missedMedicationReason: MissedMedicationReason | "";
+  missedMedicationReasonOptions: readonly MissedMedicationReason[];
+  missedMedicationReasonLabels: Record<MissedMedicationReason, string>;
   includeLocation: boolean;
   gpsConsentEnabled: boolean;
   locationFeedback: string | null;
   isSaving: boolean;
   isCapturingLocation: boolean;
+  editingEntryId: number | null;
   recentEntries: EmotionRecord[];
   isLoadingEntries: boolean;
   morningSavedToday: boolean;
@@ -71,6 +77,8 @@ type MoodWorkspaceProps = {
   onSubstanceUseTodayChange: (value: boolean) => void;
   onMoneyChangedTodayChange: (value: boolean) => void;
   onMedicationAdherenceChange: (value: MedicationAdherence) => void;
+  onMissedMedicationNameChange: (value: string) => void;
+  onMissedMedicationReasonChange: (value: MissedMedicationReason | "") => void;
   onIncludeLocationChange: (value: boolean) => void;
   onSubmit: () => void;
   onReset: () => void;
@@ -88,11 +96,16 @@ export default function PatientMoodWorkspace({
   medicationAdherence,
   medicationAdherenceOptions,
   medicationAdherenceLabels,
+  missedMedicationName,
+  missedMedicationReason,
+  missedMedicationReasonOptions,
+  missedMedicationReasonLabels,
   includeLocation,
   gpsConsentEnabled,
   locationFeedback,
   isSaving,
   isCapturingLocation,
+  editingEntryId,
   recentEntries,
   isLoadingEntries,
   morningSavedToday,
@@ -108,6 +121,8 @@ export default function PatientMoodWorkspace({
   onSubstanceUseTodayChange,
   onMoneyChangedTodayChange,
   onMedicationAdherenceChange,
+  onMissedMedicationNameChange,
+  onMissedMedicationReasonChange,
   onIncludeLocationChange,
   onSubmit,
   onReset,
@@ -117,10 +132,11 @@ export default function PatientMoodWorkspace({
       <section className="surface-panel">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className="mini-heading">Mood Check-In</p>
+            <p className="mini-heading">Daily Check-In</p>
             <h3 className="section-title mt-3">How are you feeling right now?</h3>
             <p className="section-copy">
-              Pick the emotion that fits best, then add a few details if you want to give your care team more context.
+              Pick the emotion that fits best, then add the clinical details that help your care
+              team understand what changed.
             </p>
           </div>
           <div className="hidden h-16 w-16 items-center justify-center rounded-[24px] bg-gradient-to-br from-rose-100 to-orange-100 text-rose-500 md:flex">
@@ -150,7 +166,7 @@ export default function PatientMoodWorkspace({
               <div>
                 <p className="text-5xl">{emotionMeta[selectedEmotion].emoji}</p>
                 <h4 className="mt-3 text-2xl font-bold text-slate-900">
-                  You selected {selectedEmotion}
+                  {editingEntryId != null ? `Editing ${selectedEmotion} check-in` : `You selected ${selectedEmotion}`}
                 </h4>
               </div>
               <span className={`badge ${emotionMeta[selectedEmotion].badgeClass}`}>
@@ -209,6 +225,46 @@ export default function PatientMoodWorkspace({
                     ))}
                   </select>
                 </Field>
+
+                {medicationAdherence === "missed_some" ? (
+                  <>
+                    <Field
+                      label="Which medication was missed?"
+                      htmlFor="missed-medication-name"
+                    >
+                      <input
+                        id="missed-medication-name"
+                        className="input"
+                        value={missedMedicationName}
+                        onChange={(event) => onMissedMedicationNameChange(event.target.value)}
+                        placeholder="Medication name"
+                      />
+                    </Field>
+
+                    <Field
+                      label="Why were some doses missed?"
+                      htmlFor="missed-medication-reason"
+                    >
+                      <select
+                        id="missed-medication-reason"
+                        className="input"
+                        value={missedMedicationReason}
+                        onChange={(event) =>
+                          onMissedMedicationReasonChange(
+                            event.target.value as MissedMedicationReason | "",
+                          )
+                        }
+                      >
+                        <option value="">Choose one</option>
+                        {missedMedicationReasonOptions.map((option) => (
+                          <option key={option} value={option}>
+                            {missedMedicationReasonLabels[option]}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  </>
+                ) : null}
 
                 <div className="md:col-span-2">
                   <label className="label" htmlFor="stress-level">
@@ -311,7 +367,9 @@ export default function PatientMoodWorkspace({
                   ? "Capturing GPS..."
                   : isSaving
                     ? "Saving..."
-                    : "Save My Feeling"}
+                    : editingEntryId != null
+                      ? "Update Check-In"
+                      : "Save Check-In"}
               </button>
               <button
                 type="button"
@@ -319,7 +377,7 @@ export default function PatientMoodWorkspace({
                 onClick={onReset}
                 disabled={isSaving || isCapturingLocation}
               >
-                Choose a Different Emotion
+                {editingEntryId != null ? "Cancel Edit" : "Choose a Different Emotion"}
               </button>
             </div>
           </div>

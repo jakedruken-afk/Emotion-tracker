@@ -11,10 +11,11 @@ export const observationTypeOptions = [
   "Behavioral",
   "Progress",
   "Recommendation",
+  "Alert",
 ] as const;
 export type ObservationType = (typeof observationTypeOptions)[number];
 
-export const priorityOptions = ["Low", "Medium", "High", "Urgent"] as const;
+export const priorityOptions = ["Low", "Medium", "High", "Critical", "Urgent"] as const;
 export type ObservationPriority = (typeof priorityOptions)[number];
 
 export const medicationAdherenceOptions = [
@@ -57,6 +58,34 @@ export const medicationAdherenceLabels: Record<MedicationAdherence, string> = {
   missed_all: "Missed all",
 };
 
+export const missedMedicationReasonOptions = [
+  "forgot",
+  "side_effects",
+  "ran_out",
+  "routine_change",
+  "cost",
+  "other",
+] as const;
+export type MissedMedicationReason = (typeof missedMedicationReasonOptions)[number];
+
+export const missedMedicationReasonLabels: Record<MissedMedicationReason, string> = {
+  forgot: "Forgot",
+  side_effects: "Side effects",
+  ran_out: "Ran out",
+  routine_change: "Routine changed",
+  cost: "Could not afford it",
+  other: "Other",
+};
+
+export const reliabilityLevelOptions = ["High", "Medium", "Low"] as const;
+export type ReliabilityLevel = (typeof reliabilityLevelOptions)[number];
+
+export const crisisLevelOptions = ["none", "high", "critical"] as const;
+export type CrisisLevel = (typeof crisisLevelOptions)[number];
+
+export const entryEntityTypeOptions = ["emotion", "daily_report", "weekly_screening"] as const;
+export type EntryEntityType = (typeof entryEntityTypeOptions)[number];
+
 export const demoAccounts = {
   patient: {
     username: "patient1",
@@ -93,13 +122,6 @@ export const authUserSchema = z.object({
 
 export type AuthUser = z.infer<typeof authUserSchema>;
 
-const emotionLocationShape = {
-  latitude: z.number().finite().min(-90).max(90).optional().nullable(),
-  longitude: z.number().finite().min(-180).max(180).optional().nullable(),
-  accuracyMeters: z.number().finite().nonnegative().optional().nullable(),
-  locationCapturedAt: z.string().min(1).optional().nullable(),
-};
-
 const timePattern = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
 const optionalTimeSchema = z
@@ -118,6 +140,78 @@ const optionalTimeSchema = z
   .refine((value) => value == null || timePattern.test(value), {
     message: "Please enter a valid time",
   });
+
+const optionalShortTextSchema = z
+  .string()
+  .trim()
+  .max(120, "This answer must be 120 characters or less")
+  .optional()
+  .nullable()
+  .transform((value) => {
+    if (value == null) {
+      return null;
+    }
+
+    return value.length > 0 ? value : null;
+  });
+
+const optionalMedicationTextSchema = z
+  .string()
+  .trim()
+  .max(200, "This answer must be 200 characters or less")
+  .optional()
+  .nullable()
+  .transform((value) => {
+    if (value == null) {
+      return null;
+    }
+
+    return value.length > 0 ? value : null;
+  });
+
+const optionalLongTextSchema = z
+  .string()
+  .trim()
+  .max(500, "This answer must be 500 characters or less")
+  .optional()
+  .nullable()
+  .transform((value) => {
+    if (value == null) {
+      return null;
+    }
+
+    return value.length > 0 ? value : null;
+  });
+
+const optionalCarePlanTextSchema = z
+  .string()
+  .trim()
+  .max(1000, "This answer must be 1000 characters or less")
+  .optional()
+  .nullable()
+  .transform((value) => {
+    if (value == null) {
+      return null;
+    }
+
+    return value.length > 0 ? value : null;
+  });
+
+const patientEntryMetaShape = {
+  updatedAt: z.string(),
+  editCount: z.number().int().min(0),
+  suspiciousEditCount: z.number().int().min(0),
+  reliabilityLevel: z.enum(reliabilityLevelOptions),
+  crisisLevel: z.enum(crisisLevelOptions),
+  crisisSummary: z.string().nullable(),
+};
+
+const emotionLocationShape = {
+  latitude: z.number().finite().min(-90).max(90).optional().nullable(),
+  longitude: z.number().finite().min(-180).max(180).optional().nullable(),
+  accuracyMeters: z.number().finite().nonnegative().optional().nullable(),
+  locationCapturedAt: z.string().min(1).optional().nullable(),
+};
 
 const insertEmotionStructuredShape = {
   patientId: z.string().trim().min(1, "Patient ID is required"),
@@ -141,6 +235,8 @@ const insertEmotionStructuredShape = {
   substanceUseToday: z.boolean(),
   moneyChangedToday: z.boolean(),
   medicationAdherence: z.enum(medicationAdherenceOptions),
+  missedMedicationName: optionalMedicationTextSchema,
+  missedMedicationReason: z.enum(missedMedicationReasonOptions).optional().nullable(),
 };
 
 const emotionStructuredShape = {
@@ -153,6 +249,8 @@ const emotionStructuredShape = {
   substanceUseToday: z.boolean().nullable(),
   moneyChangedToday: z.boolean().nullable(),
   medicationAdherence: z.enum(medicationAdherenceOptions).nullable(),
+  missedMedicationName: z.string().nullable(),
+  missedMedicationReason: z.enum(missedMedicationReasonOptions).nullable(),
 };
 
 const emotionInsertSchemaBase = z.object({
@@ -160,13 +258,46 @@ const emotionInsertSchemaBase = z.object({
   ...emotionLocationShape,
 });
 
+const updateEmotionSchemaBase = emotionInsertSchemaBase.omit({
+  patientId: true,
+});
+
 const emotionRecordSchemaBase = z.object({
   ...emotionStructuredShape,
+  ...patientEntryMetaShape,
   ...emotionLocationShape,
 });
 
+function validateEmotionMedication(
+  value: z.infer<typeof emotionInsertSchemaBase> | z.infer<typeof updateEmotionSchemaBase>,
+  ctx: z.RefinementCtx,
+) {
+  if (value.medicationAdherence !== "missed_some") {
+    return;
+  }
+
+  if (value.missedMedicationName == null) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Tell us which medication doses were missed",
+      path: ["missedMedicationName"],
+    });
+  }
+
+  if (value.missedMedicationReason == null) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Tell us why some medication doses were missed",
+      path: ["missedMedicationReason"],
+    });
+  }
+}
+
 function validateEmotionLocation(
-  value: z.infer<typeof emotionInsertSchemaBase> | z.infer<typeof emotionRecordSchemaBase>,
+  value:
+    | z.infer<typeof emotionInsertSchemaBase>
+    | z.infer<typeof updateEmotionSchemaBase>
+    | z.infer<typeof emotionRecordSchemaBase>,
   ctx: z.RefinementCtx,
 ) {
   const hasAnyLocationData =
@@ -196,15 +327,38 @@ function validateEmotionLocation(
   }
 }
 
-export const insertEmotionSchema = emotionInsertSchemaBase.superRefine(validateEmotionLocation);
+function validateEmotionInput(
+  value:
+    | z.infer<typeof emotionInsertSchemaBase>
+    | z.infer<typeof updateEmotionSchemaBase>
+    | z.infer<typeof emotionRecordSchemaBase>,
+  ctx: z.RefinementCtx,
+) {
+  validateEmotionLocation(value, ctx);
 
-export const emotionSchema = emotionRecordSchemaBase.extend({
-  id: z.number().int().positive(),
-  timestamp: z.string(),
-}).superRefine(validateEmotionLocation);
+  if ("medicationAdherence" in value && value.medicationAdherence != null) {
+    validateEmotionMedication(
+      value as z.infer<typeof emotionInsertSchemaBase> | z.infer<typeof updateEmotionSchemaBase>,
+      ctx,
+    );
+  }
+}
+
+export const insertEmotionSchema = emotionInsertSchemaBase.superRefine(validateEmotionInput);
+
+export const updateEmotionSchema = updateEmotionSchemaBase.superRefine(validateEmotionInput);
+
+export const emotionSchema = emotionRecordSchemaBase
+  .extend({
+    id: z.number().int().positive(),
+    timestamp: z.string(),
+  })
+  .superRefine(validateEmotionInput);
 
 export type InsertEmotion = z.infer<typeof insertEmotionSchema>;
+export type UpdateEmotion = z.infer<typeof updateEmotionSchema>;
 export type EmotionRecord = z.infer<typeof emotionSchema>;
+
 export type LocationSnapshot = {
   latitude: number;
   longitude: number;
@@ -236,11 +390,13 @@ export const observationSchema = insertObservationSchema.extend({
 export type InsertObservation = z.infer<typeof insertObservationSchema>;
 export type ObservationRecord = z.infer<typeof observationSchema>;
 
-export const emotionLogSchema = emotionRecordSchemaBase.extend({
-  id: z.number().int().positive(),
-  timestamp: z.string(),
-  observations: z.array(observationSchema),
-}).superRefine(validateEmotionLocation);
+export const emotionLogSchema = emotionRecordSchemaBase
+  .extend({
+    id: z.number().int().positive(),
+    timestamp: z.string(),
+    observations: z.array(observationSchema),
+  })
+  .superRefine(validateEmotionInput);
 
 export type EmotionLog = z.infer<typeof emotionLogSchema>;
 
@@ -252,6 +408,8 @@ const insertDailyReportShape = {
   sleepQuality: z.enum(sleepQualityOptions).optional().nullable(),
   wakeUps: z.number().int().min(0).max(20).optional().nullable(),
   feltRested: z.boolean().optional().nullable(),
+  mealsCount: z.number().int().min(0).max(12).optional().nullable(),
+  mealsNote: optionalLongTextSchema,
   notes: z
     .string()
     .trim()
@@ -275,11 +433,25 @@ const dailyReportShape = {
   sleepQuality: z.enum(sleepQualityOptions).nullable(),
   wakeUps: z.number().int().min(0).max(20).nullable(),
   feltRested: z.boolean().nullable(),
+  mealsCount: z.number().int().min(0).max(12).nullable(),
+  mealsNote: z.string().nullable(),
   notes: z.string().nullable(),
 };
 
+const insertDailyReportSchemaBase = z.object(insertDailyReportShape);
+const updateDailyReportSchemaBase = insertDailyReportSchemaBase.omit({
+  patientId: true,
+});
+const dailyReportSchemaBase = z.object({
+  ...dailyReportShape,
+  ...patientEntryMetaShape,
+});
+
 function validateDailyReport(
-  value: z.infer<typeof insertDailyReportSchemaBase> | z.infer<typeof dailyReportSchemaBase>,
+  value:
+    | z.infer<typeof insertDailyReportSchemaBase>
+    | z.infer<typeof updateDailyReportSchemaBase>
+    | z.infer<typeof dailyReportSchemaBase>,
   ctx: z.RefinementCtx,
 ) {
   if (value.bedTime == null) {
@@ -310,12 +482,21 @@ function validateDailyReport(
       });
     }
   }
+
+  if (value.reportType === "night" && value.mealsCount == null) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Please enter how many meals you had today",
+      path: ["mealsCount"],
+    });
+  }
 }
 
-const insertDailyReportSchemaBase = z.object(insertDailyReportShape);
-const dailyReportSchemaBase = z.object(dailyReportShape);
-
 export const insertDailyReportSchema = insertDailyReportSchemaBase.superRefine(
+  validateDailyReport,
+);
+
+export const updateDailyReportSchema = updateDailyReportSchemaBase.superRefine(
   validateDailyReport,
 );
 
@@ -327,6 +508,7 @@ export const dailyReportSchema = dailyReportSchemaBase
   .superRefine(validateDailyReport);
 
 export type InsertDailyReport = z.infer<typeof insertDailyReportSchema>;
+export type UpdateDailyReport = z.infer<typeof updateDailyReportSchema>;
 export type DailyReportRecord = z.infer<typeof dailyReportSchema>;
 
 export const weeklyScreeningAttemptTimingOptions = [
@@ -382,62 +564,6 @@ export const appetiteChangeDirectionLabels: Record<
   up_and_down: "Going up and down",
 };
 
-const optionalShortTextSchema = z
-  .string()
-  .trim()
-  .max(120, "This answer must be 120 characters or less")
-  .optional()
-  .nullable()
-  .transform((value) => {
-    if (value == null) {
-      return null;
-    }
-
-    return value.length > 0 ? value : null;
-  });
-
-const optionalLongTextSchema = z
-  .string()
-  .trim()
-  .max(500, "This answer must be 500 characters or less")
-  .optional()
-  .nullable()
-  .transform((value) => {
-    if (value == null) {
-      return null;
-    }
-
-    return value.length > 0 ? value : null;
-  });
-
-const optionalMedicationTextSchema = z
-  .string()
-  .trim()
-  .max(200, "This answer must be 200 characters or less")
-  .optional()
-  .nullable()
-  .transform((value) => {
-    if (value == null) {
-      return null;
-    }
-
-    return value.length > 0 ? value : null;
-  });
-
-const optionalCarePlanTextSchema = z
-  .string()
-  .trim()
-  .max(1000, "This answer must be 1000 characters or less")
-  .optional()
-  .nullable()
-  .transform((value) => {
-    if (value == null) {
-      return null;
-    }
-
-    return value.length > 0 ? value : null;
-  });
-
 const weeklyScreeningShape = {
   patientId: z.string().trim().min(1, "Patient ID is required"),
   wishedDead: z.boolean(),
@@ -470,9 +596,19 @@ const weeklyScreeningShape = {
   needsHelpStayingSafe: z.boolean().optional().nullable(),
 };
 
+const insertWeeklyScreeningSchemaBase = z.object(weeklyScreeningShape);
+const updateWeeklyScreeningSchemaBase = insertWeeklyScreeningSchemaBase.omit({
+  patientId: true,
+});
+const weeklyScreeningSchemaBase = z.object({
+  ...weeklyScreeningShape,
+  ...patientEntryMetaShape,
+});
+
 function validateWeeklyScreening(
   value:
     | z.infer<typeof insertWeeklyScreeningSchemaBase>
+    | z.infer<typeof updateWeeklyScreeningSchemaBase>
     | z.infer<typeof weeklyScreeningSchemaBase>,
   ctx: z.RefinementCtx,
 ) {
@@ -501,7 +637,8 @@ function validateWeeklyScreening(
   if (hasPositiveAsq && value.currentThoughts == null) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      message: "Please answer whether you are having thoughts of killing yourself right now",
+      message:
+        "Please answer whether you are having thoughts about harming yourself right now",
       path: ["currentThoughts"],
     });
   }
@@ -555,10 +692,11 @@ function validateWeeklyScreening(
   }
 }
 
-const insertWeeklyScreeningSchemaBase = z.object(weeklyScreeningShape);
-const weeklyScreeningSchemaBase = z.object(weeklyScreeningShape);
-
 export const insertWeeklyScreeningSchema = insertWeeklyScreeningSchemaBase.superRefine(
+  validateWeeklyScreening,
+);
+
+export const updateWeeklyScreeningSchema = updateWeeklyScreeningSchemaBase.superRefine(
   validateWeeklyScreening,
 );
 
@@ -570,6 +708,7 @@ export const weeklyScreeningSchema = weeklyScreeningSchemaBase
   .superRefine(validateWeeklyScreening);
 
 export type InsertWeeklyScreening = z.infer<typeof insertWeeklyScreeningSchema>;
+export type UpdateWeeklyScreening = z.infer<typeof updateWeeklyScreeningSchema>;
 export type WeeklyScreeningRecord = z.infer<typeof weeklyScreeningSchema>;
 
 export const insertMedicationSchema = z.object({
@@ -787,6 +926,22 @@ export const auditLogSchema = z.object({
 
 export type AuditLogRecord = z.infer<typeof auditLogSchema>;
 
+export const entryRevisionSchema = z.object({
+  id: z.number().int().positive(),
+  entityType: z.enum(entryEntityTypeOptions),
+  entityId: z.number().int().positive(),
+  patientId: z.string().trim().min(1),
+  actorRole: z.enum(roleOptions),
+  actorUsername: z.string(),
+  beforeJson: z.string(),
+  afterJson: z.string(),
+  summary: z.string().nullable(),
+  suspicious: z.boolean(),
+  timestamp: z.string(),
+});
+
+export type EntryRevisionRecord = z.infer<typeof entryRevisionSchema>;
+
 export function formatDisplayName(user: {
   firstName: string | null;
   lastName: string | null;
@@ -803,6 +958,7 @@ export function getEmotionFlags(entry: {
   substanceUseToday: boolean | null;
   moneyChangedToday: boolean | null;
   medicationAdherence: MedicationAdherence | null;
+  mealsCount?: number | null;
 }) {
   const flags: string[] = [];
 
@@ -833,6 +989,10 @@ export function getEmotionFlags(entry: {
     flags.push("medication adherence concern");
   }
 
+  if (entry.mealsCount != null && entry.mealsCount <= 1) {
+    flags.push("very low meals");
+  }
+
   return flags;
 }
 
@@ -846,6 +1006,8 @@ export function getCheckInRichness(entry: {
   substanceUseToday: boolean | null;
   moneyChangedToday: boolean | null;
   medicationAdherence: MedicationAdherence | null;
+  missedMedicationName?: string | null;
+  missedMedicationReason?: MissedMedicationReason | null;
 }) {
   const hasStructuredData =
     entry.sleepHours != null &&
@@ -857,8 +1019,11 @@ export function getCheckInRichness(entry: {
 
   const hasGps = entry.latitude != null && entry.longitude != null;
   const hasSubstantialNote = (entry.notes ?? "").trim().length >= 20;
+  const hasMedicationFollowUp =
+    (entry.missedMedicationName ?? "").trim().length > 0 ||
+    entry.missedMedicationReason != null;
 
-  if (hasStructuredData && (hasGps || hasSubstantialNote)) {
+  if (hasStructuredData && (hasGps || hasSubstantialNote || hasMedicationFollowUp)) {
     return "Corroborated";
   }
 

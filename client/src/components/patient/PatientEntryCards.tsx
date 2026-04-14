@@ -85,6 +85,19 @@ export function EmotionEntryCard({
         <span className="badge bg-slate-100 text-slate-700">
           Data: {getCheckInRichness(entry)}
         </span>
+        <span className="badge bg-slate-100 text-slate-700">
+          Reliability: {entry.reliabilityLevel}
+        </span>
+        {entry.editCount > 0 ? (
+          <span className="badge bg-amber-100 text-amber-900">
+            Edited {entry.editCount} time{entry.editCount === 1 ? "" : "s"}
+          </span>
+        ) : null}
+        {entry.crisisLevel !== "none" ? (
+          <span className="badge bg-rose-100 text-rose-900">
+            {entry.crisisLevel === "critical" ? "Critical alert" : "Safety alert"}
+          </span>
+        ) : null}
         {entry.sleepHours != null ? (
           <span className="badge bg-violet-50 text-violet-800">Sleep {entry.sleepHours}h</span>
         ) : null}
@@ -99,7 +112,18 @@ export function EmotionEntryCard({
             Meds {medicationAdherenceLabels[entry.medicationAdherence]}
           </span>
         ) : null}
+        {entry.missedMedicationName ? (
+          <span className="badge bg-amber-50 text-amber-900">
+            Missed: {entry.missedMedicationName}
+          </span>
+        ) : null}
       </div>
+
+      {entry.crisisSummary ? (
+        <p className="mt-3 rounded-[20px] border border-rose-100 bg-rose-50 px-4 py-3 text-sm text-rose-900">
+          {entry.crisisSummary}
+        </p>
+      ) : null}
 
       {!compact ? (
         <>
@@ -212,6 +236,24 @@ export function DailyReportCard({ report }: { report: DailyReportRecord }) {
             Felt rested: {report.feltRested ? "Yes" : "No"}
           </span>
         ) : null}
+        {report.mealsCount != null ? (
+          <span className="badge bg-amber-50 text-amber-800">
+            Meals {report.mealsCount}
+          </span>
+        ) : null}
+        <span className="badge bg-slate-100 text-slate-700">
+          Reliability {report.reliabilityLevel}
+        </span>
+        {report.editCount > 0 ? (
+          <span className="badge bg-amber-100 text-amber-900">
+            Edited {report.editCount} time{report.editCount === 1 ? "" : "s"}
+          </span>
+        ) : null}
+        {report.crisisLevel !== "none" ? (
+          <span className="badge bg-rose-100 text-rose-900">
+            {report.crisisLevel === "critical" ? "Critical alert" : "Safety alert"}
+          </span>
+        ) : null}
       </div>
 
       {report.notes ? (
@@ -221,6 +263,18 @@ export function DailyReportCard({ report }: { report: DailyReportRecord }) {
       ) : (
         <p className="mt-3 text-sm italic text-slate-400">No extra note added for this report.</p>
       )}
+
+      {report.mealsNote ? (
+        <p className="mt-3 rounded-[20px] bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          Meals note: {report.mealsNote}
+        </p>
+      ) : null}
+
+      {report.crisisSummary ? (
+        <p className="mt-3 rounded-[20px] border border-rose-100 bg-rose-50 px-4 py-3 text-sm text-rose-900">
+          {report.crisisSummary}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -270,6 +324,14 @@ export function WeeklyScreeningCard({
         <span className="badge bg-slate-100 text-slate-700">
           Help staying safe: {screening.needsHelpStayingSafe == null ? "Not answered" : screening.needsHelpStayingSafe ? "Yes" : "No"}
         </span>
+        <span className="badge bg-slate-100 text-slate-700">
+          Reliability {screening.reliabilityLevel}
+        </span>
+        {screening.editCount > 0 ? (
+          <span className="badge bg-amber-100 text-amber-900">
+            Edited {screening.editCount} time{screening.editCount === 1 ? "" : "s"}
+          </span>
+        ) : null}
       </div>
 
       {signals.length > 0 ? (
@@ -288,6 +350,12 @@ export function WeeklyScreeningCard({
 
       {!compact ? (
         <>
+          {screening.crisisSummary ? (
+            <p className="mt-3 rounded-[20px] border border-rose-100 bg-rose-50 px-4 py-3 text-sm text-rose-900">
+              {screening.crisisSummary}
+            </p>
+          ) : null}
+
           {followUpDetails.length > 0 ? (
             <div className="mt-3 flex flex-wrap gap-2">
               {followUpDetails.map((detail) => (
@@ -306,7 +374,7 @@ export function WeeklyScreeningCard({
 
           {screening.reasonsForLiving ? (
             <p className="mt-3 rounded-[20px] bg-slate-50 px-4 py-3 text-sm text-slate-700">
-              Reasons for living: {screening.reasonsForLiving}
+              Reasons for staying safe: {screening.reasonsForLiving}
             </p>
           ) : null}
         </>

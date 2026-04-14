@@ -24,6 +24,8 @@ type MorningReportFormState = {
 
 type NightReportFormState = {
   bedTime: string;
+  mealsCount: string;
+  mealsNote: string;
   notes: string;
 };
 
@@ -41,10 +43,14 @@ type PatientSleepWorkspaceProps = {
   nightReport: NightReportFormState;
   isSavingMorningReport: boolean;
   isSavingNightReport: boolean;
+  editingMorningReportId: number | null;
+  editingNightReportId: number | null;
   onMorningReportChange: (nextValue: MorningReportFormState) => void;
   onNightReportChange: (nextValue: NightReportFormState) => void;
   onMorningReportSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onNightReportSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onCancelMorningEdit: () => void;
+  onCancelNightEdit: () => void;
 };
 
 export default function PatientSleepWorkspace({
@@ -61,10 +67,14 @@ export default function PatientSleepWorkspace({
   nightReport,
   isSavingMorningReport,
   isSavingNightReport,
+  editingMorningReportId,
+  editingNightReportId,
   onMorningReportChange,
   onNightReportChange,
   onMorningReportSubmit,
   onNightReportSubmit,
+  onCancelMorningEdit,
+  onCancelNightEdit,
 }: PatientSleepWorkspaceProps) {
   const now = new Date();
 
@@ -116,7 +126,11 @@ export default function PatientSleepWorkspace({
           <div className="flex items-start justify-between gap-4">
             <div>
               <p className="mini-heading">Morning Report</p>
-              <h3 className="section-title mt-3">Tell us how last night went.</h3>
+              <h3 className="section-title mt-3">
+                {editingMorningReportId != null
+                  ? "Update how last night went."
+                  : "Tell us how last night went."}
+              </h3>
               <p className="section-copy">
                 Keep it simple: sleep time, wake time, quality, and whether you feel rested.
               </p>
@@ -235,22 +249,37 @@ export default function PatientSleepWorkspace({
             </div>
           </div>
 
-          <button
-            type="submit"
-            className="btn btn-primary mt-6 w-full"
-            disabled={isSavingMorningReport}
-          >
-            {isSavingMorningReport ? "Saving..." : "Save Morning Report"}
-          </button>
+          <div className="mt-6 flex flex-col gap-3">
+            <button
+              type="submit"
+              className="btn btn-primary w-full"
+              disabled={isSavingMorningReport}
+            >
+              {isSavingMorningReport
+                ? "Saving..."
+                : editingMorningReportId != null
+                  ? "Update Morning Report"
+                  : "Save Morning Report"}
+            </button>
+            {editingMorningReportId != null ? (
+              <button type="button" className="btn btn-secondary w-full" onClick={onCancelMorningEdit}>
+                Cancel Morning Edit
+              </button>
+            ) : null}
+          </div>
         </form>
 
         <form className="surface-panel" onSubmit={onNightReportSubmit}>
           <div className="flex items-start justify-between gap-4">
             <div>
               <p className="mini-heading">Night Report</p>
-              <h3 className="section-title mt-3">Set up tonight&apos;s sleep plan.</h3>
+              <h3 className="section-title mt-3">
+                {editingNightReportId != null
+                  ? "Update tonight&apos;s routine report."
+                  : "Set up tonight&apos;s sleep plan."}
+              </h3>
               <p className="section-copy">
-                Add your bedtime and anything that may make sleep hard tonight.
+                Add your bedtime, meals today, and anything that may make sleep or eating hard tonight.
               </p>
             </div>
             <div className="hidden h-14 w-14 items-center justify-center rounded-[22px] bg-indigo-100 text-indigo-600 md:flex">
@@ -274,10 +303,28 @@ export default function PatientSleepWorkspace({
               />
             </Field>
 
+            <Field label="How many meals did you have today?" htmlFor="night-meals-count">
+              <input
+                id="night-meals-count"
+                type="number"
+                min="0"
+                max="12"
+                className="input"
+                value={nightReport.mealsCount}
+                onChange={(event) =>
+                  onNightReportChange({
+                    ...nightReport,
+                    mealsCount: event.target.value,
+                  })
+                }
+                placeholder="0"
+              />
+            </Field>
+
             <Field label="Bedtime notes (optional)" htmlFor="night-notes">
               <textarea
                 id="night-notes"
-                className="input min-h-48 resize-y"
+                className="input min-h-32 resize-y"
                 maxLength={300}
                 value={nightReport.notes}
                 onChange={(event) =>
@@ -289,15 +336,42 @@ export default function PatientSleepWorkspace({
                 placeholder="Anything that may make sleep hard tonight?"
               />
             </Field>
+
+            <Field label="Meals note (optional)" htmlFor="night-meals-note">
+              <textarea
+                id="night-meals-note"
+                className="input min-h-32 resize-y"
+                maxLength={500}
+                value={nightReport.mealsNote}
+                onChange={(event) =>
+                  onNightReportChange({
+                    ...nightReport,
+                    mealsNote: event.target.value,
+                  })
+                }
+                placeholder="Anything that affected eating today?"
+              />
+            </Field>
           </div>
 
-          <button
-            type="submit"
-            className="btn btn-primary mt-6 w-full"
-            disabled={isSavingNightReport}
-          >
-            {isSavingNightReport ? "Saving..." : "Save Night Report"}
-          </button>
+          <div className="mt-6 flex flex-col gap-3">
+            <button
+              type="submit"
+              className="btn btn-primary w-full"
+              disabled={isSavingNightReport}
+            >
+              {isSavingNightReport
+                ? "Saving..."
+                : editingNightReportId != null
+                  ? "Update Night Report"
+                  : "Save Night Report"}
+            </button>
+            {editingNightReportId != null ? (
+              <button type="button" className="btn btn-secondary w-full" onClick={onCancelNightEdit}>
+                Cancel Night Edit
+              </button>
+            ) : null}
+          </div>
         </form>
       </div>
 

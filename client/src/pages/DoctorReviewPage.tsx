@@ -195,18 +195,26 @@ export default function DoctorReviewPage({
   const latestDisposition = latestScreening
     ? getWeeklyScreeningDisposition(latestScreening)
     : null;
-  const risk = buildPatientRiskSnapshot(patientId, summaryLogs, dailyReports, screenings);
+  const risk = buildPatientRiskSnapshot(
+    patientId,
+    summaryLogs,
+    dailyReports,
+    screenings,
+    observations,
+  );
   const weeklyReview = buildWeeklyPatientReview(
     patientId,
     summaryLogs,
     dailyReports,
     screenings,
+    observations,
   );
   const visitSummary = buildDoctorVisitSummary({
     patientId,
     logs: summaryLogs,
     dailyReports,
     screenings,
+    observations,
     medications,
     carePlan,
     risk,
@@ -216,6 +224,7 @@ export default function DoctorReviewPage({
     logs: summaryLogs,
     dailyReports,
     screenings,
+    observations,
     medications,
     carePlan,
     risk,
@@ -471,7 +480,11 @@ export default function DoctorReviewPage({
               <MetricTile
                 label="Risk status"
                 value={risk.riskLevel}
-                detail={risk.summary}
+                detail={
+                  risk.whatChanged.length > 0
+                    ? risk.whatChanged.join(" ")
+                    : "No major change signal detected."
+                }
                 tone="coral"
               />
               <MetricTile
@@ -505,6 +518,98 @@ export default function DoctorReviewPage({
                 tone="sky"
               />
             </div>
+          </div>
+        </section>
+
+        <section className="surface-panel">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <SectionHeader
+              eyebrow="10-Second Brief"
+              title="What the doctor needs first"
+              copy="This keeps the visit-opening answers visible before the deeper history and forms."
+            />
+
+            <div className="flex flex-wrap gap-2">
+              <span
+                className={`badge ${
+                  risk.riskLevel === "Critical"
+                    ? "bg-rose-100 text-rose-900"
+                    : risk.riskLevel === "High"
+                      ? "bg-orange-100 text-orange-900"
+                      : risk.riskLevel === "Medium"
+                        ? "bg-amber-100 text-amber-900"
+                        : "bg-emerald-100 text-emerald-800"
+                }`}
+              >
+                {risk.riskLevel}
+              </span>
+              <span className="badge bg-slate-100 text-slate-700">
+                Reliability {risk.reliabilityLevel}
+              </span>
+              {risk.mismatchSummary ? (
+                <span className="badge bg-amber-100 text-amber-900">Perspective mismatch</span>
+              ) : null}
+              {risk.crisisLevel !== "none" ? (
+                <span className="badge bg-rose-100 text-rose-900">
+                  {risk.crisisLevel === "critical" ? "Critical safety alert" : "Safety alert"}
+                </span>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="mt-6 grid gap-4 lg:grid-cols-2">
+            <div className="timeline-card">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                What is happening?
+              </p>
+              <p className="mt-2 text-sm leading-6 text-slate-700">
+                {weeklyReview.keyChanges.length > 0
+                  ? weeklyReview.keyChanges.join(" ")
+                  : "No major change signal was detected."}
+              </p>
+            </div>
+            <div className="timeline-card">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                How serious is it?
+              </p>
+              <p className="mt-2 text-sm leading-6 text-slate-700">
+                {risk.riskLevel} priority.
+                {risk.crisisSummary ? ` ${risk.crisisSummary}` : ""}
+              </p>
+            </div>
+            <div className="timeline-card">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Why is it happening?
+              </p>
+              <p className="mt-2 text-sm leading-6 text-slate-700">
+                {risk.reasons.length > 0
+                  ? risk.reasons.join(" ")
+                  : "No major review reason was detected."}
+              </p>
+            </div>
+            <div className="timeline-card">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                What should the doctor do?
+              </p>
+              <p className="mt-2 text-sm leading-6 text-slate-700">
+                {risk.suggestedActions.join(" ")}
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-4 lg:grid-cols-2">
+            <div className="rounded-[24px] border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-700">
+              {risk.reliabilitySummary}
+            </div>
+            {risk.mismatchSummary ? (
+              <div className="rounded-[24px] border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
+                {risk.mismatchSummary}
+              </div>
+            ) : (
+              <div className="rounded-[24px] border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-700">
+                No patient-versus-support mismatch was flagged in the current review.
+              </div>
+            )}
           </div>
         </section>
 

@@ -35,10 +35,18 @@ export async function initializeDatabase() {
       substance_use_today INTEGER,
       money_changed_today INTEGER,
       medication_adherence TEXT,
+      missed_medication_name TEXT,
+      missed_medication_reason TEXT,
       latitude REAL,
       longitude REAL,
       accuracy_meters REAL,
       location_captured_at TEXT,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      edit_count INTEGER NOT NULL DEFAULT 0,
+      suspicious_edit_count INTEGER NOT NULL DEFAULT 0,
+      reliability_level TEXT NOT NULL DEFAULT 'High',
+      crisis_level TEXT NOT NULL DEFAULT 'none',
+      crisis_summary TEXT,
       timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -61,7 +69,15 @@ export async function initializeDatabase() {
       sleep_quality TEXT,
       wake_ups INTEGER,
       felt_rested INTEGER,
+      meals_count INTEGER,
+      meals_note TEXT,
       notes TEXT,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      edit_count INTEGER NOT NULL DEFAULT 0,
+      suspicious_edit_count INTEGER NOT NULL DEFAULT 0,
+      reliability_level TEXT NOT NULL DEFAULT 'High',
+      crisis_level TEXT NOT NULL DEFAULT 'none',
+      crisis_summary TEXT,
       timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -93,6 +109,12 @@ export async function initializeDatabase() {
       reasons_for_living TEXT,
       coping_plan TEXT,
       needs_help_staying_safe INTEGER,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      edit_count INTEGER NOT NULL DEFAULT 0,
+      suspicious_edit_count INTEGER NOT NULL DEFAULT 0,
+      reliability_level TEXT NOT NULL DEFAULT 'High',
+      crisis_level TEXT NOT NULL DEFAULT 'none',
+      crisis_summary TEXT,
       timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -181,14 +203,29 @@ export async function initializeDatabase() {
       user_agent TEXT,
       timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS entry_revisions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      entity_type TEXT NOT NULL,
+      entity_id INTEGER NOT NULL,
+      patient_id TEXT NOT NULL,
+      actor_role TEXT NOT NULL,
+      actor_username TEXT NOT NULL,
+      before_json TEXT NOT NULL,
+      after_json TEXT NOT NULL,
+      summary TEXT,
+      suspicious INTEGER NOT NULL DEFAULT 0,
+      timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 
-  ensureEmotionLocationColumns();
+  ensureEmotionColumns();
+  ensureDailyReportColumns();
   ensureWeeklyScreeningColumns();
   await seedDemoUsers();
 }
 
-function ensureEmotionLocationColumns() {
+function ensureEmotionColumns() {
   const existingColumns = db
     .prepare("PRAGMA table_info(emotions)")
     .all() as Array<{ name?: string }>;
@@ -233,6 +270,85 @@ function ensureEmotionLocationColumns() {
   if (!columnNames.has("location_captured_at")) {
     db.exec("ALTER TABLE emotions ADD COLUMN location_captured_at TEXT");
   }
+
+  if (!columnNames.has("missed_medication_name")) {
+    db.exec("ALTER TABLE emotions ADD COLUMN missed_medication_name TEXT");
+  }
+
+  if (!columnNames.has("missed_medication_reason")) {
+    db.exec("ALTER TABLE emotions ADD COLUMN missed_medication_reason TEXT");
+  }
+
+  if (!columnNames.has("updated_at")) {
+    db.exec("ALTER TABLE emotions ADD COLUMN updated_at TEXT");
+    db.exec("UPDATE emotions SET updated_at = timestamp WHERE updated_at IS NULL");
+  }
+
+  if (!columnNames.has("edit_count")) {
+    db.exec("ALTER TABLE emotions ADD COLUMN edit_count INTEGER NOT NULL DEFAULT 0");
+  }
+
+  if (!columnNames.has("suspicious_edit_count")) {
+    db.exec(
+      "ALTER TABLE emotions ADD COLUMN suspicious_edit_count INTEGER NOT NULL DEFAULT 0",
+    );
+  }
+
+  if (!columnNames.has("reliability_level")) {
+    db.exec("ALTER TABLE emotions ADD COLUMN reliability_level TEXT NOT NULL DEFAULT 'High'");
+  }
+
+  if (!columnNames.has("crisis_level")) {
+    db.exec("ALTER TABLE emotions ADD COLUMN crisis_level TEXT NOT NULL DEFAULT 'none'");
+  }
+
+  if (!columnNames.has("crisis_summary")) {
+    db.exec("ALTER TABLE emotions ADD COLUMN crisis_summary TEXT");
+  }
+}
+
+function ensureDailyReportColumns() {
+  const existingColumns = db
+    .prepare("PRAGMA table_info(daily_reports)")
+    .all() as Array<{ name?: string }>;
+  const columnNames = new Set(existingColumns.map((column) => column.name));
+
+  if (!columnNames.has("meals_count")) {
+    db.exec("ALTER TABLE daily_reports ADD COLUMN meals_count INTEGER");
+  }
+
+  if (!columnNames.has("meals_note")) {
+    db.exec("ALTER TABLE daily_reports ADD COLUMN meals_note TEXT");
+  }
+
+  if (!columnNames.has("updated_at")) {
+    db.exec("ALTER TABLE daily_reports ADD COLUMN updated_at TEXT");
+    db.exec("UPDATE daily_reports SET updated_at = timestamp WHERE updated_at IS NULL");
+  }
+
+  if (!columnNames.has("edit_count")) {
+    db.exec("ALTER TABLE daily_reports ADD COLUMN edit_count INTEGER NOT NULL DEFAULT 0");
+  }
+
+  if (!columnNames.has("suspicious_edit_count")) {
+    db.exec(
+      "ALTER TABLE daily_reports ADD COLUMN suspicious_edit_count INTEGER NOT NULL DEFAULT 0",
+    );
+  }
+
+  if (!columnNames.has("reliability_level")) {
+    db.exec(
+      "ALTER TABLE daily_reports ADD COLUMN reliability_level TEXT NOT NULL DEFAULT 'High'",
+    );
+  }
+
+  if (!columnNames.has("crisis_level")) {
+    db.exec("ALTER TABLE daily_reports ADD COLUMN crisis_level TEXT NOT NULL DEFAULT 'none'");
+  }
+
+  if (!columnNames.has("crisis_summary")) {
+    db.exec("ALTER TABLE daily_reports ADD COLUMN crisis_summary TEXT");
+  }
 }
 
 function ensureWeeklyScreeningColumns() {
@@ -263,6 +379,39 @@ function ensureWeeklyScreeningColumns() {
 
   if (!columnNames.has("appetite_change_direction")) {
     db.exec("ALTER TABLE weekly_screenings ADD COLUMN appetite_change_direction TEXT");
+  }
+
+  if (!columnNames.has("updated_at")) {
+    db.exec("ALTER TABLE weekly_screenings ADD COLUMN updated_at TEXT");
+    db.exec("UPDATE weekly_screenings SET updated_at = timestamp WHERE updated_at IS NULL");
+  }
+
+  if (!columnNames.has("edit_count")) {
+    db.exec(
+      "ALTER TABLE weekly_screenings ADD COLUMN edit_count INTEGER NOT NULL DEFAULT 0",
+    );
+  }
+
+  if (!columnNames.has("suspicious_edit_count")) {
+    db.exec(
+      "ALTER TABLE weekly_screenings ADD COLUMN suspicious_edit_count INTEGER NOT NULL DEFAULT 0",
+    );
+  }
+
+  if (!columnNames.has("reliability_level")) {
+    db.exec(
+      "ALTER TABLE weekly_screenings ADD COLUMN reliability_level TEXT NOT NULL DEFAULT 'High'",
+    );
+  }
+
+  if (!columnNames.has("crisis_level")) {
+    db.exec(
+      "ALTER TABLE weekly_screenings ADD COLUMN crisis_level TEXT NOT NULL DEFAULT 'none'",
+    );
+  }
+
+  if (!columnNames.has("crisis_summary")) {
+    db.exec("ALTER TABLE weekly_screenings ADD COLUMN crisis_summary TEXT");
   }
 }
 

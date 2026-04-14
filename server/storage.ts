@@ -2,8 +2,13 @@ import { db } from "./db";
 import {
   type AppetiteChangeDirection,
   type CarePlanRecord,
+  type CrisisLevel,
+  type DailyReportRecord,
   type DailyReportType,
   type EmotionName,
+  type EmotionRecord,
+  type EntryEntityType,
+  type EntryRevisionRecord,
   type InsertCarePlan,
   type InsertDailyReport,
   type InsertEmotion,
@@ -12,12 +17,19 @@ import {
   type InsertWeeklyScreening,
   type MedicationAdherence,
   type MedicationRecord,
+  type MissedMedicationReason,
   type ObservationPriority,
+  type ObservationRecord,
   type ObservationType,
+  type ReliabilityLevel,
   type SleepQuality,
   type UpdateCarePlan,
+  type UpdateDailyReport,
+  type UpdateEmotion,
   type UpdateMedication,
+  type UpdateWeeklyScreening,
   type UserRole,
+  type WeeklyScreeningRecord,
   type WeeklyScreeningAttemptTiming,
   type WeeklyScreeningFrequency,
 } from "../shared/contracts";
@@ -40,85 +52,20 @@ export type InsertUser = {
   lastName?: string | null;
 };
 
-export type Emotion = {
-  id: number;
-  patientId: string;
-  emotion: EmotionName;
-  notes: string | null;
-  sleepHours: number | null;
-  stressLevel: number | null;
-  cravingLevel: number | null;
-  substanceUseToday: boolean | null;
-  moneyChangedToday: boolean | null;
-  medicationAdherence: MedicationAdherence | null;
-  latitude: number | null;
-  longitude: number | null;
-  accuracyMeters: number | null;
-  locationCapturedAt: string | null;
-  timestamp: string;
-};
-
+export type Emotion = EmotionRecord;
 export type InsertEmotionRow = InsertEmotion;
+export type UpdateEmotionRow = UpdateEmotion;
 
-export type Observation = {
-  id: number;
-  patientId: string;
-  observationType: ObservationType;
-  observation: string;
-  priority: ObservationPriority;
-  supportWorkerName: string;
-  timestamp: string;
-};
-
+export type Observation = ObservationRecord;
 export type InsertObservationRow = InsertObservation;
 
-export type DailyReport = {
-  id: number;
-  patientId: string;
-  reportType: DailyReportType;
-  bedTime: string | null;
-  wakeTime: string | null;
-  sleepQuality: SleepQuality | null;
-  wakeUps: number | null;
-  feltRested: boolean | null;
-  notes: string | null;
-  timestamp: string;
-};
-
+export type DailyReport = DailyReportRecord;
 export type InsertDailyReportRow = InsertDailyReport;
+export type UpdateDailyReportRow = UpdateDailyReport;
 
-export type WeeklyScreening = {
-  id: number;
-  patientId: string;
-  wishedDead: boolean;
-  familyBetterOffDead: boolean;
-  thoughtsKillingSelf: boolean;
-  thoughtsKillingSelfFrequency: WeeklyScreeningFrequency | null;
-  everTriedToKillSelf: boolean;
-  attemptTiming: WeeklyScreeningAttemptTiming;
-  currentThoughts: boolean | null;
-  depressedHardToFunction: boolean;
-  depressedFrequency: WeeklyScreeningFrequency | null;
-  anxiousOnEdge: boolean;
-  anxiousFrequency: WeeklyScreeningFrequency | null;
-  hopeless: boolean;
-  couldNotEnjoyThings: boolean;
-  keepingToSelf: boolean;
-  moreIrritable: boolean;
-  substanceUseMoreThanUsual: boolean;
-  substanceUseFrequency: WeeklyScreeningFrequency | null;
-  sleepTrouble: boolean;
-  sleepTroubleFrequency: WeeklyScreeningFrequency | null;
-  appetiteChange: boolean;
-  appetiteChangeDirection: AppetiteChangeDirection | null;
-  supportPerson: string | null;
-  reasonsForLiving: string | null;
-  copingPlan: string | null;
-  needsHelpStayingSafe: boolean | null;
-  timestamp: string;
-};
-
+export type WeeklyScreening = WeeklyScreeningRecord;
 export type InsertWeeklyScreeningRow = InsertWeeklyScreening;
+export type UpdateWeeklyScreeningRow = UpdateWeeklyScreening;
 
 export type Medication = MedicationRecord;
 export type InsertMedicationRow = InsertMedication;
@@ -128,21 +75,65 @@ export type CarePlan = CarePlanRecord;
 export type InsertCarePlanRow = InsertCarePlan;
 export type UpdateCarePlanRow = UpdateCarePlan;
 
+export type EntryRevision = EntryRevisionRecord;
+
+export type PatientEntryPersistenceMeta = {
+  crisisLevel: CrisisLevel;
+  crisisSummary: string | null;
+  reliabilityLevel: ReliabilityLevel;
+};
+
+export type PatientEntryUpdateMeta = PatientEntryPersistenceMeta & {
+  suspiciousEdit: boolean;
+};
+
+export type InsertEntryRevisionRow = {
+  entityType: EntryEntityType;
+  entityId: number;
+  patientId: string;
+  actorRole: UserRole;
+  actorUsername: string;
+  beforeJson: string;
+  afterJson: string;
+  summary: string | null;
+  suspicious: boolean;
+};
+
 export interface IStorage {
   getUser(id: number): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   authenticateUser(username: string, password: string): Promise<User | null>;
-  createEmotion(emotion: InsertEmotionRow): Promise<Emotion>;
+  createEmotion(emotion: InsertEmotionRow, meta: PatientEntryPersistenceMeta): Promise<Emotion>;
+  updateEmotion(id: number, emotion: UpdateEmotionRow, meta: PatientEntryUpdateMeta): Promise<Emotion>;
+  getEmotionById(id: number): Promise<Emotion | undefined>;
   getEmotionsByPatientId(patientId: string): Promise<Emotion[]>;
   getAllEmotions(): Promise<Emotion[]>;
   createObservation(observation: InsertObservationRow): Promise<Observation>;
   getObservationsByPatientId(patientId: string): Promise<Observation[]>;
   getAllObservations(): Promise<Observation[]>;
-  createDailyReport(report: InsertDailyReportRow): Promise<DailyReport>;
+  createDailyReport(
+    report: InsertDailyReportRow,
+    meta: PatientEntryPersistenceMeta,
+  ): Promise<DailyReport>;
+  updateDailyReport(
+    id: number,
+    report: UpdateDailyReportRow,
+    meta: PatientEntryUpdateMeta,
+  ): Promise<DailyReport>;
+  getDailyReportById(id: number): Promise<DailyReport | undefined>;
   getDailyReportsByPatientId(patientId: string): Promise<DailyReport[]>;
   getAllDailyReports(): Promise<DailyReport[]>;
-  createWeeklyScreening(screening: InsertWeeklyScreeningRow): Promise<WeeklyScreening>;
+  createWeeklyScreening(
+    screening: InsertWeeklyScreeningRow,
+    meta: PatientEntryPersistenceMeta,
+  ): Promise<WeeklyScreening>;
+  updateWeeklyScreening(
+    id: number,
+    screening: UpdateWeeklyScreeningRow,
+    meta: PatientEntryUpdateMeta,
+  ): Promise<WeeklyScreening>;
+  getWeeklyScreeningById(id: number): Promise<WeeklyScreening | undefined>;
   getWeeklyScreeningsByPatientId(patientId: string): Promise<WeeklyScreening[]>;
   getAllWeeklyScreenings(): Promise<WeeklyScreening[]>;
   createMedication(medication: InsertMedicationRow): Promise<Medication>;
@@ -152,6 +143,8 @@ export interface IStorage {
   createCarePlan(carePlan: InsertCarePlanRow): Promise<CarePlan>;
   updateCarePlan(patientId: string, carePlan: UpdateCarePlanRow): Promise<CarePlan>;
   getCarePlanByPatientId(patientId: string): Promise<CarePlan | undefined>;
+  createEntryRevision(revision: InsertEntryRevisionRow): Promise<EntryRevision>;
+  getEntryRevisionsByPatientId(patientId: string): Promise<EntryRevision[]>;
 }
 
 function mapUser(row: Record<string, unknown> | undefined): User | undefined {
@@ -191,11 +184,23 @@ function mapEmotion(row: Record<string, unknown> | undefined): Emotion | undefin
       row.medicationAdherence == null
         ? null
         : (String(row.medicationAdherence) as MedicationAdherence),
+    missedMedicationName:
+      row.missedMedicationName == null ? null : String(row.missedMedicationName),
+    missedMedicationReason:
+      row.missedMedicationReason == null
+        ? null
+        : (String(row.missedMedicationReason) as MissedMedicationReason),
     latitude: row.latitude == null ? null : Number(row.latitude),
     longitude: row.longitude == null ? null : Number(row.longitude),
     accuracyMeters: row.accuracyMeters == null ? null : Number(row.accuracyMeters),
     locationCapturedAt:
       row.locationCapturedAt == null ? null : String(row.locationCapturedAt),
+    updatedAt: String(row.updatedAt ?? row.timestamp),
+    editCount: Number(row.editCount ?? 0),
+    suspiciousEditCount: Number(row.suspiciousEditCount ?? 0),
+    reliabilityLevel: (row.reliabilityLevel ?? "High") as ReliabilityLevel,
+    crisisLevel: (row.crisisLevel ?? "none") as CrisisLevel,
+    crisisSummary: row.crisisSummary == null ? null : String(row.crisisSummary),
     timestamp: String(row.timestamp),
   };
 }
@@ -231,7 +236,15 @@ function mapDailyReport(row: Record<string, unknown> | undefined): DailyReport |
       row.sleepQuality == null ? null : (String(row.sleepQuality) as SleepQuality),
     wakeUps: row.wakeUps == null ? null : Number(row.wakeUps),
     feltRested: row.feltRested == null ? null : Boolean(row.feltRested),
+    mealsCount: row.mealsCount == null ? null : Number(row.mealsCount),
+    mealsNote: row.mealsNote == null ? null : String(row.mealsNote),
     notes: row.notes == null ? null : String(row.notes),
+    updatedAt: String(row.updatedAt ?? row.timestamp),
+    editCount: Number(row.editCount ?? 0),
+    suspiciousEditCount: Number(row.suspiciousEditCount ?? 0),
+    reliabilityLevel: (row.reliabilityLevel ?? "High") as ReliabilityLevel,
+    crisisLevel: (row.crisisLevel ?? "none") as CrisisLevel,
+    crisisSummary: row.crisisSummary == null ? null : String(row.crisisSummary),
     timestamp: String(row.timestamp),
   };
 }
@@ -291,6 +304,12 @@ function mapWeeklyScreening(
     copingPlan: row.copingPlan == null ? null : String(row.copingPlan),
     needsHelpStayingSafe:
       row.needsHelpStayingSafe == null ? null : Boolean(row.needsHelpStayingSafe),
+    updatedAt: String(row.updatedAt ?? row.timestamp),
+    editCount: Number(row.editCount ?? 0),
+    suspiciousEditCount: Number(row.suspiciousEditCount ?? 0),
+    reliabilityLevel: (row.reliabilityLevel ?? "High") as ReliabilityLevel,
+    crisisLevel: (row.crisisLevel ?? "none") as CrisisLevel,
+    crisisSummary: row.crisisSummary == null ? null : String(row.crisisSummary),
     timestamp: String(row.timestamp),
   };
 }
@@ -337,6 +356,26 @@ function mapCarePlan(row: Record<string, unknown> | undefined): CarePlan | undef
     updatedBy: String(row.updatedBy),
     createdAt: String(row.createdAt),
     updatedAt: String(row.updatedAt),
+  };
+}
+
+function mapEntryRevision(row: Record<string, unknown> | undefined): EntryRevision | undefined {
+  if (!row) {
+    return undefined;
+  }
+
+  return {
+    id: Number(row.id),
+    entityType: row.entityType as EntryEntityType,
+    entityId: Number(row.entityId),
+    patientId: String(row.patientId),
+    actorRole: row.actorRole as UserRole,
+    actorUsername: String(row.actorUsername),
+    beforeJson: String(row.beforeJson),
+    afterJson: String(row.afterJson),
+    summary: row.summary == null ? null : String(row.summary),
+    suspicious: Boolean(row.suspicious),
+    timestamp: String(row.timestamp),
   };
 }
 
@@ -412,7 +451,7 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
-  async createEmotion(emotion: InsertEmotionRow) {
+  async createEmotion(emotion: InsertEmotionRow, meta: PatientEntryPersistenceMeta) {
     const insertResult = db
       .prepare(`
         INSERT INTO emotions (
@@ -425,12 +464,20 @@ export class DatabaseStorage implements IStorage {
           substance_use_today,
           money_changed_today,
           medication_adherence,
+          missed_medication_name,
+          missed_medication_reason,
           latitude,
           longitude,
           accuracy_meters,
-          location_captured_at
+          location_captured_at,
+          updated_at,
+          edit_count,
+          suspicious_edit_count,
+          reliability_level,
+          crisis_level,
+          crisis_summary
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 0, 0, ?, ?, ?)
       `)
       .run(
         emotion.patientId,
@@ -442,12 +489,88 @@ export class DatabaseStorage implements IStorage {
         emotion.substanceUseToday ? 1 : 0,
         emotion.moneyChangedToday ? 1 : 0,
         emotion.medicationAdherence,
+        emotion.missedMedicationName ?? null,
+        emotion.missedMedicationReason ?? null,
         emotion.latitude ?? null,
         emotion.longitude ?? null,
         emotion.accuracyMeters ?? null,
         emotion.locationCapturedAt ?? null,
+        meta.reliabilityLevel,
+        meta.crisisLevel,
+        meta.crisisSummary,
       );
 
+    const createdEmotion = await this.getEmotionById(Number(insertResult.lastInsertRowid));
+
+    if (!createdEmotion) {
+      throw new Error("Failed to create emotion");
+    }
+
+    return createdEmotion;
+  }
+
+  async updateEmotion(id: number, emotion: UpdateEmotionRow, meta: PatientEntryUpdateMeta) {
+    const updateResult = db
+      .prepare(`
+        UPDATE emotions
+        SET
+          emotion = ?,
+          notes = ?,
+          sleep_hours = ?,
+          stress_level = ?,
+          craving_level = ?,
+          substance_use_today = ?,
+          money_changed_today = ?,
+          medication_adherence = ?,
+          missed_medication_name = ?,
+          missed_medication_reason = ?,
+          latitude = ?,
+          longitude = ?,
+          accuracy_meters = ?,
+          location_captured_at = ?,
+          updated_at = CURRENT_TIMESTAMP,
+          edit_count = edit_count + 1,
+          suspicious_edit_count = suspicious_edit_count + ?,
+          reliability_level = ?,
+          crisis_level = ?,
+          crisis_summary = ?
+        WHERE id = ?
+      `)
+      .run(
+        emotion.emotion,
+        emotion.notes ?? null,
+        emotion.sleepHours,
+        emotion.stressLevel,
+        emotion.cravingLevel,
+        emotion.substanceUseToday ? 1 : 0,
+        emotion.moneyChangedToday ? 1 : 0,
+        emotion.medicationAdherence,
+        emotion.missedMedicationName ?? null,
+        emotion.missedMedicationReason ?? null,
+        emotion.latitude ?? null,
+        emotion.longitude ?? null,
+        emotion.accuracyMeters ?? null,
+        emotion.locationCapturedAt ?? null,
+        meta.suspiciousEdit ? 1 : 0,
+        meta.reliabilityLevel,
+        meta.crisisLevel,
+        meta.crisisSummary,
+        id,
+      );
+
+    if (updateResult.changes === 0) {
+      throw new Error("Emotion entry not found");
+    }
+
+    const updatedEmotion = await this.getEmotionById(id);
+    if (!updatedEmotion) {
+      throw new Error("Failed to update emotion entry");
+    }
+
+    return updatedEmotion;
+  }
+
+  async getEmotionById(id: number) {
     const row = db
       .prepare(`
         SELECT
@@ -461,23 +584,25 @@ export class DatabaseStorage implements IStorage {
           substance_use_today AS substanceUseToday,
           money_changed_today AS moneyChangedToday,
           medication_adherence AS medicationAdherence,
+          missed_medication_name AS missedMedicationName,
+          missed_medication_reason AS missedMedicationReason,
           latitude,
           longitude,
           accuracy_meters AS accuracyMeters,
           location_captured_at AS locationCapturedAt,
+          updated_at AS updatedAt,
+          edit_count AS editCount,
+          suspicious_edit_count AS suspiciousEditCount,
+          reliability_level AS reliabilityLevel,
+          crisis_level AS crisisLevel,
+          crisis_summary AS crisisSummary,
           timestamp
         FROM emotions
         WHERE id = ?
       `)
-      .get(Number(insertResult.lastInsertRowid)) as Record<string, unknown> | undefined;
+      .get(id) as Record<string, unknown> | undefined;
 
-    const createdEmotion = mapEmotion(row);
-
-    if (!createdEmotion) {
-      throw new Error("Failed to create emotion");
-    }
-
-    return createdEmotion;
+    return mapEmotion(row);
   }
 
   async getEmotionsByPatientId(patientId: string) {
@@ -494,10 +619,18 @@ export class DatabaseStorage implements IStorage {
           substance_use_today AS substanceUseToday,
           money_changed_today AS moneyChangedToday,
           medication_adherence AS medicationAdherence,
+          missed_medication_name AS missedMedicationName,
+          missed_medication_reason AS missedMedicationReason,
           latitude,
           longitude,
           accuracy_meters AS accuracyMeters,
           location_captured_at AS locationCapturedAt,
+          updated_at AS updatedAt,
+          edit_count AS editCount,
+          suspicious_edit_count AS suspiciousEditCount,
+          reliability_level AS reliabilityLevel,
+          crisis_level AS crisisLevel,
+          crisis_summary AS crisisSummary,
           timestamp
         FROM emotions
         WHERE patient_id = ?
@@ -524,10 +657,18 @@ export class DatabaseStorage implements IStorage {
           substance_use_today AS substanceUseToday,
           money_changed_today AS moneyChangedToday,
           medication_adherence AS medicationAdherence,
+          missed_medication_name AS missedMedicationName,
+          missed_medication_reason AS missedMedicationReason,
           latitude,
           longitude,
           accuracy_meters AS accuracyMeters,
           location_captured_at AS locationCapturedAt,
+          updated_at AS updatedAt,
+          edit_count AS editCount,
+          suspicious_edit_count AS suspiciousEditCount,
+          reliability_level AS reliabilityLevel,
+          crisis_level AS crisisLevel,
+          crisis_summary AS crisisSummary,
           timestamp
         FROM emotions
         ORDER BY timestamp DESC, id DESC
@@ -583,7 +724,7 @@ export class DatabaseStorage implements IStorage {
     return createdObservation;
   }
 
-  async createDailyReport(report: InsertDailyReportRow) {
+  async createDailyReport(report: InsertDailyReportRow, meta: PatientEntryPersistenceMeta) {
     const insertResult = db
       .prepare(`
         INSERT INTO daily_reports (
@@ -594,9 +735,17 @@ export class DatabaseStorage implements IStorage {
           sleep_quality,
           wake_ups,
           felt_rested,
-          notes
+          meals_count,
+          meals_note,
+          notes,
+          updated_at,
+          edit_count,
+          suspicious_edit_count,
+          reliability_level,
+          crisis_level,
+          crisis_summary
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 0, 0, ?, ?, ?)
       `)
       .run(
         report.patientId,
@@ -606,34 +755,72 @@ export class DatabaseStorage implements IStorage {
         report.sleepQuality ?? null,
         report.wakeUps ?? null,
         report.feltRested == null ? null : report.feltRested ? 1 : 0,
+        report.mealsCount ?? null,
+        report.mealsNote ?? null,
         report.notes ?? null,
+        meta.reliabilityLevel,
+        meta.crisisLevel,
+        meta.crisisSummary,
       );
 
-    const row = db
-      .prepare(`
-        SELECT
-          id,
-          patient_id AS patientId,
-          report_type AS reportType,
-          bed_time AS bedTime,
-          wake_time AS wakeTime,
-          sleep_quality AS sleepQuality,
-          wake_ups AS wakeUps,
-          felt_rested AS feltRested,
-          notes,
-          timestamp
-        FROM daily_reports
-        WHERE id = ?
-      `)
-      .get(Number(insertResult.lastInsertRowid)) as Record<string, unknown> | undefined;
-
-    const createdReport = mapDailyReport(row);
+    const createdReport = await this.getDailyReportById(Number(insertResult.lastInsertRowid));
 
     if (!createdReport) {
       throw new Error("Failed to create daily report");
     }
 
     return createdReport;
+  }
+
+  async updateDailyReport(id: number, report: UpdateDailyReportRow, meta: PatientEntryUpdateMeta) {
+    const updateResult = db
+      .prepare(`
+        UPDATE daily_reports
+        SET
+          report_type = ?,
+          bed_time = ?,
+          wake_time = ?,
+          sleep_quality = ?,
+          wake_ups = ?,
+          felt_rested = ?,
+          meals_count = ?,
+          meals_note = ?,
+          notes = ?,
+          updated_at = CURRENT_TIMESTAMP,
+          edit_count = edit_count + 1,
+          suspicious_edit_count = suspicious_edit_count + ?,
+          reliability_level = ?,
+          crisis_level = ?,
+          crisis_summary = ?
+        WHERE id = ?
+      `)
+      .run(
+        report.reportType,
+        report.bedTime ?? null,
+        report.wakeTime ?? null,
+        report.sleepQuality ?? null,
+        report.wakeUps ?? null,
+        report.feltRested == null ? null : report.feltRested ? 1 : 0,
+        report.mealsCount ?? null,
+        report.mealsNote ?? null,
+        report.notes ?? null,
+        meta.suspiciousEdit ? 1 : 0,
+        meta.reliabilityLevel,
+        meta.crisisLevel,
+        meta.crisisSummary,
+        id,
+      );
+
+    if (updateResult.changes === 0) {
+      throw new Error("Daily report not found");
+    }
+
+    const updatedReport = await this.getDailyReportById(id);
+    if (!updatedReport) {
+      throw new Error("Failed to update daily report");
+    }
+
+    return updatedReport;
   }
 
   async getObservationsByPatientId(patientId: string) {
@@ -679,6 +866,36 @@ export class DatabaseStorage implements IStorage {
       .filter((row): row is Observation => row !== undefined);
   }
 
+  async getDailyReportById(id: number) {
+    const row = db
+      .prepare(`
+        SELECT
+          id,
+          patient_id AS patientId,
+          report_type AS reportType,
+          bed_time AS bedTime,
+          wake_time AS wakeTime,
+          sleep_quality AS sleepQuality,
+          wake_ups AS wakeUps,
+          felt_rested AS feltRested,
+          meals_count AS mealsCount,
+          meals_note AS mealsNote,
+          notes,
+          updated_at AS updatedAt,
+          edit_count AS editCount,
+          suspicious_edit_count AS suspiciousEditCount,
+          reliability_level AS reliabilityLevel,
+          crisis_level AS crisisLevel,
+          crisis_summary AS crisisSummary,
+          timestamp
+        FROM daily_reports
+        WHERE id = ?
+      `)
+      .get(id) as Record<string, unknown> | undefined;
+
+    return mapDailyReport(row);
+  }
+
   async getDailyReportsByPatientId(patientId: string) {
     const rows = db
       .prepare(`
@@ -691,7 +908,15 @@ export class DatabaseStorage implements IStorage {
           sleep_quality AS sleepQuality,
           wake_ups AS wakeUps,
           felt_rested AS feltRested,
+          meals_count AS mealsCount,
+          meals_note AS mealsNote,
           notes,
+          updated_at AS updatedAt,
+          edit_count AS editCount,
+          suspicious_edit_count AS suspiciousEditCount,
+          reliability_level AS reliabilityLevel,
+          crisis_level AS crisisLevel,
+          crisis_summary AS crisisSummary,
           timestamp
         FROM daily_reports
         WHERE patient_id = ?
@@ -716,7 +941,15 @@ export class DatabaseStorage implements IStorage {
           sleep_quality AS sleepQuality,
           wake_ups AS wakeUps,
           felt_rested AS feltRested,
+          meals_count AS mealsCount,
+          meals_note AS mealsNote,
           notes,
+          updated_at AS updatedAt,
+          edit_count AS editCount,
+          suspicious_edit_count AS suspiciousEditCount,
+          reliability_level AS reliabilityLevel,
+          crisis_level AS crisisLevel,
+          crisis_summary AS crisisSummary,
           timestamp
         FROM daily_reports
         ORDER BY timestamp DESC, id DESC
@@ -728,7 +961,10 @@ export class DatabaseStorage implements IStorage {
       .filter((row): row is DailyReport => row !== undefined);
   }
 
-  async createWeeklyScreening(screening: InsertWeeklyScreeningRow) {
+  async createWeeklyScreening(
+    screening: InsertWeeklyScreeningRow,
+    meta: PatientEntryPersistenceMeta,
+  ) {
     const insertResult = db
       .prepare(`
         INSERT INTO weekly_screenings (
@@ -757,9 +993,15 @@ export class DatabaseStorage implements IStorage {
           support_person,
           reasons_for_living,
           coping_plan,
-          needs_help_staying_safe
+          needs_help_staying_safe,
+          updated_at,
+          edit_count,
+          suspicious_edit_count,
+          reliability_level,
+          crisis_level,
+          crisis_summary
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 0, 0, ?, ?, ?)
       `)
       .run(
         screening.patientId,
@@ -792,8 +1034,114 @@ export class DatabaseStorage implements IStorage {
           : screening.needsHelpStayingSafe
             ? 1
             : 0,
+        meta.reliabilityLevel,
+        meta.crisisLevel,
+        meta.crisisSummary,
       );
 
+    const createdScreening = await this.getWeeklyScreeningById(
+      Number(insertResult.lastInsertRowid),
+    );
+
+    if (!createdScreening) {
+      throw new Error("Failed to create weekly screening");
+    }
+
+    return createdScreening;
+  }
+
+  async updateWeeklyScreening(
+    id: number,
+    screening: UpdateWeeklyScreeningRow,
+    meta: PatientEntryUpdateMeta,
+  ) {
+    const updateResult = db
+      .prepare(`
+        UPDATE weekly_screenings
+        SET
+          wished_dead = ?,
+          family_better_off_dead = ?,
+          thoughts_killing_self = ?,
+          thoughts_killing_self_frequency = ?,
+          ever_tried_to_kill_self = ?,
+          attempt_timing = ?,
+          current_thoughts = ?,
+          depressed_hard_to_function = ?,
+          depressed_frequency = ?,
+          anxious_on_edge = ?,
+          anxious_frequency = ?,
+          hopeless = ?,
+          could_not_enjoy_things = ?,
+          keeping_to_self = ?,
+          more_irritable = ?,
+          substance_use_more_than_usual = ?,
+          substance_use_frequency = ?,
+          sleep_trouble = ?,
+          sleep_trouble_frequency = ?,
+          appetite_change = ?,
+          appetite_change_direction = ?,
+          support_person = ?,
+          reasons_for_living = ?,
+          coping_plan = ?,
+          needs_help_staying_safe = ?,
+          updated_at = CURRENT_TIMESTAMP,
+          edit_count = edit_count + 1,
+          suspicious_edit_count = suspicious_edit_count + ?,
+          reliability_level = ?,
+          crisis_level = ?,
+          crisis_summary = ?
+        WHERE id = ?
+      `)
+      .run(
+        screening.wishedDead ? 1 : 0,
+        screening.familyBetterOffDead ? 1 : 0,
+        screening.thoughtsKillingSelf ? 1 : 0,
+        screening.thoughtsKillingSelfFrequency ?? null,
+        screening.everTriedToKillSelf ? 1 : 0,
+        screening.attemptTiming,
+        screening.currentThoughts == null ? null : screening.currentThoughts ? 1 : 0,
+        screening.depressedHardToFunction ? 1 : 0,
+        screening.depressedFrequency ?? null,
+        screening.anxiousOnEdge ? 1 : 0,
+        screening.anxiousFrequency ?? null,
+        screening.hopeless ? 1 : 0,
+        screening.couldNotEnjoyThings ? 1 : 0,
+        screening.keepingToSelf ? 1 : 0,
+        screening.moreIrritable ? 1 : 0,
+        screening.substanceUseMoreThanUsual ? 1 : 0,
+        screening.substanceUseFrequency ?? null,
+        screening.sleepTrouble ? 1 : 0,
+        screening.sleepTroubleFrequency ?? null,
+        screening.appetiteChange ? 1 : 0,
+        screening.appetiteChangeDirection ?? null,
+        screening.supportPerson ?? null,
+        screening.reasonsForLiving ?? null,
+        screening.copingPlan ?? null,
+        screening.needsHelpStayingSafe == null
+          ? null
+          : screening.needsHelpStayingSafe
+            ? 1
+            : 0,
+        meta.suspiciousEdit ? 1 : 0,
+        meta.reliabilityLevel,
+        meta.crisisLevel,
+        meta.crisisSummary,
+        id,
+      );
+
+    if (updateResult.changes === 0) {
+      throw new Error("Weekly screening not found");
+    }
+
+    const updatedScreening = await this.getWeeklyScreeningById(id);
+    if (!updatedScreening) {
+      throw new Error("Failed to update weekly screening");
+    }
+
+    return updatedScreening;
+  }
+
+  async getWeeklyScreeningById(id: number) {
     const row = db
       .prepare(`
         SELECT
@@ -824,19 +1172,19 @@ export class DatabaseStorage implements IStorage {
           reasons_for_living AS reasonsForLiving,
           coping_plan AS copingPlan,
           needs_help_staying_safe AS needsHelpStayingSafe,
+          updated_at AS updatedAt,
+          edit_count AS editCount,
+          suspicious_edit_count AS suspiciousEditCount,
+          reliability_level AS reliabilityLevel,
+          crisis_level AS crisisLevel,
+          crisis_summary AS crisisSummary,
           timestamp
         FROM weekly_screenings
         WHERE id = ?
       `)
-      .get(Number(insertResult.lastInsertRowid)) as Record<string, unknown> | undefined;
+      .get(id) as Record<string, unknown> | undefined;
 
-    const createdScreening = mapWeeklyScreening(row);
-
-    if (!createdScreening) {
-      throw new Error("Failed to create weekly screening");
-    }
-
-    return createdScreening;
+    return mapWeeklyScreening(row);
   }
 
   async getWeeklyScreeningsByPatientId(patientId: string) {
@@ -870,6 +1218,12 @@ export class DatabaseStorage implements IStorage {
           reasons_for_living AS reasonsForLiving,
           coping_plan AS copingPlan,
           needs_help_staying_safe AS needsHelpStayingSafe,
+          updated_at AS updatedAt,
+          edit_count AS editCount,
+          suspicious_edit_count AS suspiciousEditCount,
+          reliability_level AS reliabilityLevel,
+          crisis_level AS crisisLevel,
+          crisis_summary AS crisisSummary,
           timestamp
         FROM weekly_screenings
         WHERE patient_id = ?
@@ -913,6 +1267,12 @@ export class DatabaseStorage implements IStorage {
           reasons_for_living AS reasonsForLiving,
           coping_plan AS copingPlan,
           needs_help_staying_safe AS needsHelpStayingSafe,
+          updated_at AS updatedAt,
+          edit_count AS editCount,
+          suspicious_edit_count AS suspiciousEditCount,
+          reliability_level AS reliabilityLevel,
+          crisis_level AS crisisLevel,
+          crisis_summary AS crisisSummary,
           timestamp
         FROM weekly_screenings
         ORDER BY timestamp DESC, id DESC
@@ -1195,6 +1555,87 @@ export class DatabaseStorage implements IStorage {
       .get(patientId) as Record<string, unknown> | undefined;
 
     return mapCarePlan(row);
+  }
+
+  async createEntryRevision(revision: InsertEntryRevisionRow) {
+    const insertResult = db
+      .prepare(`
+        INSERT INTO entry_revisions (
+          entity_type,
+          entity_id,
+          patient_id,
+          actor_role,
+          actor_username,
+          before_json,
+          after_json,
+          summary,
+          suspicious
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        revision.entityType,
+        revision.entityId,
+        revision.patientId,
+        revision.actorRole,
+        revision.actorUsername,
+        revision.beforeJson,
+        revision.afterJson,
+        revision.summary ?? null,
+        revision.suspicious ? 1 : 0,
+      );
+
+    const row = db
+      .prepare(`
+        SELECT
+          id,
+          entity_type AS entityType,
+          entity_id AS entityId,
+          patient_id AS patientId,
+          actor_role AS actorRole,
+          actor_username AS actorUsername,
+          before_json AS beforeJson,
+          after_json AS afterJson,
+          summary,
+          suspicious,
+          timestamp
+        FROM entry_revisions
+        WHERE id = ?
+      `)
+      .get(Number(insertResult.lastInsertRowid)) as Record<string, unknown> | undefined;
+
+    const createdRevision = mapEntryRevision(row);
+    if (!createdRevision) {
+      throw new Error("Failed to create entry revision");
+    }
+
+    return createdRevision;
+  }
+
+  async getEntryRevisionsByPatientId(patientId: string) {
+    const rows = db
+      .prepare(`
+        SELECT
+          id,
+          entity_type AS entityType,
+          entity_id AS entityId,
+          patient_id AS patientId,
+          actor_role AS actorRole,
+          actor_username AS actorUsername,
+          before_json AS beforeJson,
+          after_json AS afterJson,
+          summary,
+          suspicious,
+          timestamp
+        FROM entry_revisions
+        WHERE patient_id = ?
+        ORDER BY timestamp DESC, id DESC
+      `)
+      .all(patientId) as Record<string, unknown>[];
+
+    return rows
+      .map((row) => mapEntryRevision(row))
+      .filter((row): row is EntryRevision => row !== undefined);
   }
 }
 

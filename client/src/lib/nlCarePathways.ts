@@ -16,7 +16,7 @@ export const nlCarePathways: CarePathway[] = [
     description: "Use for immediate danger, overdose, or urgent medical emergency.",
     href: "tel:911",
     kind: "call",
-    suggestedFor: ["Urgent"],
+    suggestedFor: ["Critical"],
   },
   {
     id: "call-811",
@@ -25,7 +25,7 @@ export const nlCarePathways: CarePathway[] = [
       "24/7 support for mental health, addictions, crisis concerns, and help finding local services.",
     href: "tel:811",
     kind: "call",
-    suggestedFor: ["Urgent", "High", "Medium"],
+    suggestedFor: ["Critical", "High", "Medium"],
   },
   {
     id: "doorways",

@@ -2,12 +2,16 @@ import type { Express, Request, Response } from "express";
 import { z } from "zod";
 import {
   acceptInviteSchema,
+  type DailyReportRecord,
+  type EmotionRecord,
+  type WeeklyScreeningRecord,
   authUserSchema,
   carePlanSchema,
   consentRecordSchema,
   createInviteSchema,
   createPatientAssignmentSchema,
   dailyReportSchema,
+  emotionSchema,
   emotionLogSchema,
   insertCarePlanSchema,
   insertDailyReportSchema,
@@ -25,10 +29,20 @@ import {
   staffSummarySchema,
   updateCarePlanSchema,
   updateConsentSchema,
+  updateDailyReportSchema,
+  updateEmotionSchema,
   updateMedicationSchema,
+  updateWeeklyScreeningSchema,
   weeklyScreeningSchema,
   type AuthUser,
 } from "../shared/contracts";
+import {
+  SYSTEM_ALERT_AUTHOR,
+  buildReliabilityLevel,
+  evaluatePatientTextForCrisis,
+  evaluateSuspiciousEdit,
+  summarizeRevision,
+} from "./clinicalMonitoring";
 import {
   assertPatientAccess,
   clearSessionCookie,
@@ -120,6 +134,75 @@ async function logView(
     entityType,
     entityId: patientId,
     details: details ? JSON.stringify(details) : null,
+    ipAddress: metadata.ipAddress,
+    userAgent: metadata.userAgent,
+  });
+}
+
+function getEmotionTextInputs(record: Pick<
+  EmotionRecord,
+  "notes" | "missedMedicationName"
+>) {
+  return [record.notes, record.missedMedicationName];
+}
+
+function getDailyReportTextInputs(record: Pick<
+  DailyReportRecord,
+  "notes" | "mealsNote"
+>) {
+  return [record.notes, record.mealsNote];
+}
+
+function getWeeklyScreeningTextInputs(record: Pick<
+  WeeklyScreeningRecord,
+  "supportPerson" | "reasonsForLiving" | "copingPlan"
+>) {
+  return [record.supportPerson, record.reasonsForLiving, record.copingPlan];
+}
+
+async function maybeCreateCrisisAlert(
+  req: Request,
+  patientId: string,
+  previousLevel: "none" | "high" | "critical",
+  nextLevel: "none" | "high" | "critical",
+  summary: string | null,
+) {
+  if (nextLevel === "none") {
+    return;
+  }
+
+  const shouldCreate =
+    previousLevel === "none" ||
+    (previousLevel === "high" && nextLevel === "critical");
+
+  if (!shouldCreate) {
+    return;
+  }
+
+  await storage.createObservation({
+    patientId,
+    observationType: "Alert",
+    observation:
+      summary ??
+      "Patient text suggests thoughts about self-harm or an immediate need for safety review.",
+    priority: nextLevel === "critical" ? "Critical" : "High",
+    supportWorkerName: SYSTEM_ALERT_AUTHOR,
+  });
+
+  if (!req.sessionUser) {
+    return;
+  }
+
+  const metadata = getRequestMetadata(req);
+  await createAuditLog({
+    actorUserId: req.sessionUser.id,
+    actorRole: req.sessionUser.role,
+    actorUsername: req.sessionUser.username,
+    patientId,
+    action: "crisis_alert.created",
+    entityType: "observation",
+    entityId: null,
+    details: JSON.stringify({ level: nextLevel, summary }),
     ipAddress: metadata.ipAddress,
     userAgent: metadata.userAgent,
   });
@@ -337,7 +420,13 @@ export function registerRoutes(app: Express) {
           .json({ message: "GPS consent is required before saving location data" });
       }
 
-      const createdEmotion = await storage.createEmotion(emotion);
+      const crisis = evaluatePatientTextForCrisis(getEmotionTextInputs(emotion));
+      const createdEmotion = await storage.createEmotion(emotion, {
+        crisisLevel: crisis.level,
+        crisisSummary: crisis.summary,
+        reliabilityLevel: "High",
+      });
+      await maybeCreateCrisisAlert(req, emotion.patientId, "none", createdEmotion.crisisLevel, createdEmotion.crisisSummary);
       await createAuditLog({
         actorUserId: user.id,
         actorRole: user.role,
@@ -346,14 +435,126 @@ export function registerRoutes(app: Express) {
         action: "emotion.created",
         entityType: "emotion",
         entityId: String(createdEmotion.id),
-        details: JSON.stringify({ emotion: createdEmotion.emotion }),
+        details: JSON.stringify({
+          emotion: createdEmotion.emotion,
+          crisisLevel: createdEmotion.crisisLevel,
+        }),
         ipAddress: getRequestMetadata(req).ipAddress,
         userAgent: getRequestMetadata(req).userAgent,
       });
-      return res.status(201).json(createdEmotion);
+      return res.status(201).json(emotionSchema.parse(createdEmotion));
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: getZodMessage(error) });
+      }
+
+      return res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.patch("/api/emotions/:id", requireRole("patient"), async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ message: "Emotion entry ID must be a positive number" });
+      }
+
+      const existingEmotion = await storage.getEmotionById(id);
+      if (!existingEmotion) {
+        return res.status(404).json({ message: "Emotion entry not found" });
+      }
+
+      const user = getRequestUser(req);
+      if (existingEmotion.patientId !== user.username) {
+        return res.status(403).json({ message: "Patients can only edit their own entries" });
+      }
+
+      const consent = await requireConsent(
+        req,
+        res,
+        existingEmotion.patientId,
+        "moodTracking",
+        "Mood tracking consent is required before updating entries",
+      );
+      if (!consent) {
+        return;
+      }
+
+      const emotion = updateEmotionSchema.parse(req.body);
+      const includesLocation =
+        emotion.latitude != null ||
+        emotion.longitude != null ||
+        emotion.accuracyMeters != null ||
+        emotion.locationCapturedAt != null;
+
+      if (includesLocation && !consent.gpsTracking) {
+        return res
+          .status(403)
+          .json({ message: "GPS consent is required before saving location data" });
+      }
+
+      const crisis = evaluatePatientTextForCrisis(getEmotionTextInputs(emotion));
+      const previewEmotion: EmotionRecord = {
+        ...existingEmotion,
+        ...emotion,
+        crisisLevel: crisis.level,
+        crisisSummary: crisis.summary,
+      };
+      const suspicious = evaluateSuspiciousEdit("emotion", existingEmotion, previewEmotion);
+      const updatedEmotion = await storage.updateEmotion(id, emotion, {
+        crisisLevel: crisis.level,
+        crisisSummary: crisis.summary,
+        suspiciousEdit: suspicious,
+        reliabilityLevel: buildReliabilityLevel(
+          existingEmotion.editCount + 1,
+          existingEmotion.suspiciousEditCount + (suspicious ? 1 : 0),
+        ),
+      });
+
+      await storage.createEntryRevision({
+        entityType: "emotion",
+        entityId: id,
+        patientId: existingEmotion.patientId,
+        actorRole: user.role,
+        actorUsername: user.username,
+        beforeJson: JSON.stringify(existingEmotion),
+        afterJson: JSON.stringify(updatedEmotion),
+        summary: summarizeRevision("emotion", user.role, suspicious),
+        suspicious,
+      });
+
+      await maybeCreateCrisisAlert(
+        req,
+        existingEmotion.patientId,
+        existingEmotion.crisisLevel,
+        updatedEmotion.crisisLevel,
+        updatedEmotion.crisisSummary,
+      );
+
+      await createAuditLog({
+        actorUserId: user.id,
+        actorRole: user.role,
+        actorUsername: user.username,
+        patientId: existingEmotion.patientId,
+        action: "emotion.updated",
+        entityType: "emotion",
+        entityId: String(id),
+        details: JSON.stringify({
+          suspiciousEdit: suspicious,
+          crisisLevel: updatedEmotion.crisisLevel,
+        }),
+        ipAddress: getRequestMetadata(req).ipAddress,
+        userAgent: getRequestMetadata(req).userAgent,
+      });
+
+      return res.json(emotionSchema.parse(updatedEmotion));
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: getZodMessage(error) });
+      }
+
+      if (error instanceof Error && error.message.includes("not found")) {
+        return res.status(404).json({ message: error.message });
       }
 
       return res.status(500).json({ message: "Internal server error" });
@@ -396,7 +597,19 @@ export function registerRoutes(app: Express) {
         return;
       }
 
-      const createdReport = await storage.createDailyReport(report);
+      const crisis = evaluatePatientTextForCrisis(getDailyReportTextInputs(report));
+      const createdReport = await storage.createDailyReport(report, {
+        crisisLevel: crisis.level,
+        crisisSummary: crisis.summary,
+        reliabilityLevel: "High",
+      });
+      await maybeCreateCrisisAlert(
+        req,
+        report.patientId,
+        "none",
+        createdReport.crisisLevel,
+        createdReport.crisisSummary,
+      );
       await createAuditLog({
         actorUserId: user.id,
         actorRole: user.role,
@@ -405,7 +618,10 @@ export function registerRoutes(app: Express) {
         action: "daily_report.created",
         entityType: "daily_report",
         entityId: String(createdReport.id),
-        details: JSON.stringify({ reportType: createdReport.reportType }),
+        details: JSON.stringify({
+          reportType: createdReport.reportType,
+          crisisLevel: createdReport.crisisLevel,
+        }),
         ipAddress: getRequestMetadata(req).ipAddress,
         userAgent: getRequestMetadata(req).userAgent,
       });
@@ -413,6 +629,103 @@ export function registerRoutes(app: Express) {
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: getZodMessage(error) });
+      }
+
+      return res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.patch("/api/daily-reports/:id", requireRole("patient"), async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ message: "Daily report ID must be a positive number" });
+      }
+
+      const existingReport = await storage.getDailyReportById(id);
+      if (!existingReport) {
+        return res.status(404).json({ message: "Daily report not found" });
+      }
+
+      const user = getRequestUser(req);
+      if (existingReport.patientId !== user.username) {
+        return res.status(403).json({ message: "Patients can only edit their own reports" });
+      }
+
+      const consent = await requireConsent(
+        req,
+        res,
+        existingReport.patientId,
+        "sleepReports",
+        "Sleep-report consent is required before updating daily reports",
+      );
+      if (!consent) {
+        return;
+      }
+
+      const report = updateDailyReportSchema.parse(req.body);
+      const crisis = evaluatePatientTextForCrisis(getDailyReportTextInputs(report));
+      const previewReport: DailyReportRecord = {
+        ...existingReport,
+        ...report,
+        crisisLevel: crisis.level,
+        crisisSummary: crisis.summary,
+      };
+      const suspicious = evaluateSuspiciousEdit("daily_report", existingReport, previewReport);
+      const updatedReport = await storage.updateDailyReport(id, report, {
+        crisisLevel: crisis.level,
+        crisisSummary: crisis.summary,
+        suspiciousEdit: suspicious,
+        reliabilityLevel: buildReliabilityLevel(
+          existingReport.editCount + 1,
+          existingReport.suspiciousEditCount + (suspicious ? 1 : 0),
+        ),
+      });
+
+      await storage.createEntryRevision({
+        entityType: "daily_report",
+        entityId: id,
+        patientId: existingReport.patientId,
+        actorRole: user.role,
+        actorUsername: user.username,
+        beforeJson: JSON.stringify(existingReport),
+        afterJson: JSON.stringify(updatedReport),
+        summary: summarizeRevision("daily_report", user.role, suspicious),
+        suspicious,
+      });
+
+      await maybeCreateCrisisAlert(
+        req,
+        existingReport.patientId,
+        existingReport.crisisLevel,
+        updatedReport.crisisLevel,
+        updatedReport.crisisSummary,
+      );
+
+      await createAuditLog({
+        actorUserId: user.id,
+        actorRole: user.role,
+        actorUsername: user.username,
+        patientId: existingReport.patientId,
+        action: "daily_report.updated",
+        entityType: "daily_report",
+        entityId: String(id),
+        details: JSON.stringify({
+          suspiciousEdit: suspicious,
+          crisisLevel: updatedReport.crisisLevel,
+        }),
+        ipAddress: getRequestMetadata(req).ipAddress,
+        userAgent: getRequestMetadata(req).userAgent,
+      });
+
+      return res.json(dailyReportSchema.parse(updatedReport));
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: getZodMessage(error) });
+      }
+
+      if (error instanceof Error && error.message.includes("not found")) {
+        return res.status(404).json({ message: error.message });
       }
 
       return res.status(500).json({ message: "Internal server error" });
@@ -540,7 +853,24 @@ export function registerRoutes(app: Express) {
         return;
       }
 
-      const createdScreening = await storage.createWeeklyScreening(screening);
+      const textCrisis = evaluatePatientTextForCrisis(getWeeklyScreeningTextInputs(screening));
+      const screeningCrisisLevel =
+        screening.currentThoughts === true ? "critical" : textCrisis.level;
+      const createdScreening = await storage.createWeeklyScreening(screening, {
+        crisisLevel: screeningCrisisLevel,
+        crisisSummary:
+          screening.currentThoughts === true
+            ? "Weekly safety screen shows a current need for immediate safety support."
+            : textCrisis.summary,
+        reliabilityLevel: "High",
+      });
+      await maybeCreateCrisisAlert(
+        req,
+        screening.patientId,
+        "none",
+        createdScreening.crisisLevel,
+        createdScreening.crisisSummary,
+      );
       await createAuditLog({
         actorUserId: user.id,
         actorRole: user.role,
@@ -549,7 +879,7 @@ export function registerRoutes(app: Express) {
         action: "weekly_screening.created",
         entityType: "weekly_screening",
         entityId: String(createdScreening.id),
-        details: null,
+        details: JSON.stringify({ crisisLevel: createdScreening.crisisLevel }),
         ipAddress: getRequestMetadata(req).ipAddress,
         userAgent: getRequestMetadata(req).userAgent,
       });
@@ -557,6 +887,115 @@ export function registerRoutes(app: Express) {
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: getZodMessage(error) });
+      }
+
+      return res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.patch("/api/weekly-screenings/:id", requireRole("patient"), async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res
+          .status(400)
+          .json({ message: "Weekly screen ID must be a positive number" });
+      }
+
+      const existingScreening = await storage.getWeeklyScreeningById(id);
+      if (!existingScreening) {
+        return res.status(404).json({ message: "Weekly screen not found" });
+      }
+
+      const user = getRequestUser(req);
+      if (existingScreening.patientId !== user.username) {
+        return res.status(403).json({ message: "Patients can only edit their own weekly screens" });
+      }
+
+      const consent = await requireConsent(
+        req,
+        res,
+        existingScreening.patientId,
+        "weeklyScreening",
+        "Weekly-screen consent is required before updating this screen",
+      );
+      if (!consent) {
+        return;
+      }
+
+      const screening = updateWeeklyScreeningSchema.parse(req.body);
+      const textCrisis = evaluatePatientTextForCrisis(getWeeklyScreeningTextInputs(screening));
+      const crisisLevel = screening.currentThoughts === true ? "critical" : textCrisis.level;
+      const crisisSummary =
+        screening.currentThoughts === true
+          ? "Weekly safety screen shows a current need for immediate safety support."
+          : textCrisis.summary;
+
+      const previewScreening: WeeklyScreeningRecord = {
+        ...existingScreening,
+        ...screening,
+        crisisLevel,
+        crisisSummary,
+      };
+      const suspicious = evaluateSuspiciousEdit(
+        "weekly_screening",
+        existingScreening,
+        previewScreening,
+      );
+      const updatedScreening = await storage.updateWeeklyScreening(id, screening, {
+        crisisLevel,
+        crisisSummary,
+        suspiciousEdit: suspicious,
+        reliabilityLevel: buildReliabilityLevel(
+          existingScreening.editCount + 1,
+          existingScreening.suspiciousEditCount + (suspicious ? 1 : 0),
+        ),
+      });
+
+      await storage.createEntryRevision({
+        entityType: "weekly_screening",
+        entityId: id,
+        patientId: existingScreening.patientId,
+        actorRole: user.role,
+        actorUsername: user.username,
+        beforeJson: JSON.stringify(existingScreening),
+        afterJson: JSON.stringify(updatedScreening),
+        summary: summarizeRevision("weekly_screening", user.role, suspicious),
+        suspicious,
+      });
+
+      await maybeCreateCrisisAlert(
+        req,
+        existingScreening.patientId,
+        existingScreening.crisisLevel,
+        updatedScreening.crisisLevel,
+        updatedScreening.crisisSummary,
+      );
+
+      await createAuditLog({
+        actorUserId: user.id,
+        actorRole: user.role,
+        actorUsername: user.username,
+        patientId: existingScreening.patientId,
+        action: "weekly_screening.updated",
+        entityType: "weekly_screening",
+        entityId: String(id),
+        details: JSON.stringify({
+          suspiciousEdit: suspicious,
+          crisisLevel: updatedScreening.crisisLevel,
+        }),
+        ipAddress: getRequestMetadata(req).ipAddress,
+        userAgent: getRequestMetadata(req).userAgent,
+      });
+
+      return res.json(weeklyScreeningSchema.parse(updatedScreening));
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: getZodMessage(error) });
+      }
+
+      if (error instanceof Error && error.message.includes("not found")) {
+        return res.status(404).json({ message: error.message });
       }
 
       return res.status(500).json({ message: "Internal server error" });
