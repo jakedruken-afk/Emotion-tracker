@@ -956,7 +956,7 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
                     </button>
                   </div>
 
-                  <div className="mt-6 rounded-[28px] border border-slate-200 bg-white px-5 py-5 text-sm leading-7 text-slate-700">
+                  <div className="mt-6 whitespace-pre-line rounded-[28px] border border-slate-200 bg-white px-5 py-5 text-sm leading-7 text-slate-700">
                     {clinicianSummary}
                   </div>
 

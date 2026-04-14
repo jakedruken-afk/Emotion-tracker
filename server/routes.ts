@@ -11,6 +11,7 @@ import {
   createInviteSchema,
   createPatientAssignmentSchema,
   dailyReportSchema,
+  entryRevisionSchema,
   emotionSchema,
   emotionLogSchema,
   insertCarePlanSchema,
@@ -1028,6 +1029,22 @@ export function registerRoutes(app: Express) {
         total: screenings.length,
       });
       return res.json(screenings.map((screening) => weeklyScreeningSchema.parse(screening)));
+    } catch {
+      return res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.get("/api/entry-revisions/:patientId", requireRole("support"), async (req, res) => {
+    try {
+      if (!(await ensurePatientAccess(req, res, req.params.patientId))) {
+        return;
+      }
+
+      const revisions = await storage.getEntryRevisionsByPatientId(req.params.patientId);
+      await logView(req, "entry_revision.patient.view", "entry_revision", req.params.patientId, {
+        total: revisions.length,
+      });
+      return res.json(revisions.map((revision) => entryRevisionSchema.parse(revision)));
     } catch {
       return res.status(500).json({ message: "Internal server error" });
     }

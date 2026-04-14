@@ -18,16 +18,21 @@ export type CrisisEvaluation = {
 
 const criticalPatterns = [
   /\b(i am|i'm|im|i feel|feel) (not safe|unsafe)\b/,
-  /\b(can't|cannot|cant) keep myself safe\b/,
+  /\b(can'?t|cannot) keep myself safe\b/,
   /\b(plan|planning|going|want|wanted|wants) to (end my life|hurt myself|self-harm|self harm|overdose|kill myself)\b/,
   /\b(going to|plan to) (overdose|hurt myself|end it|kill myself)\b/,
   /\bneed help staying safe right now\b/,
+  /\bi(?: feel like)?(?: [a-z']+){0,4} (don'?t|do not|didn'?t|did not) belong on (this )?(earth|world)( anymore)?\b/,
+  /\bi(?: feel like)?(?: [a-z']+){0,4} (shouldn'?t|should not) be here( anymore)?\b/,
+  /\bi (want|wish) (to )?(die|be dead|not exist|disappear forever)\b/,
+  /\bi wish i (was|were) dead\b/,
+  /\bi (don'?t|do not) deserve to live\b/,
 ];
 
 const passivePatterns = [
-  /\b(don't|do not|didn't|did not) want to be here\b/,
-  /\bwish(?:ed)? (i|they) (wasn't|weren't) here\b/,
-  /\bfeel(?:ing)? like i (don't|do not|didn't|did not) want to be here\b/,
+  /\b(don'?t|do not|didn'?t|did not) want to be here\b/,
+  /\bwish(?:ed)? (i|they) (wasn'?t|weren'?t) here\b/,
+  /\bfeel(?:ing)? like i (don'?t|do not|didn'?t|did not) want to be here\b/,
   /\bthoughts? about harming myself\b/,
   /\bwant to disappear\b/,
   /\brather not wake up\b/,
@@ -46,7 +51,7 @@ const historicalOrQuotedContext = [
 ];
 
 function normalizeText(value: string) {
-  return value.toLowerCase().replace(/\s+/g, " ").trim();
+  return value.toLowerCase().replace(/[’`]/g, "'").replace(/\s+/g, " ").trim();
 }
 
 export function evaluatePatientTextForCrisis(texts: Array<string | null | undefined>) {

@@ -14,6 +14,7 @@ import type {
   AuthUser,
   CarePlanRecord,
   DailyReportRecord,
+  EntryRevisionRecord,
   EmotionLog,
   EmotionRecord,
   MedicationRecord,
@@ -122,6 +123,7 @@ export default function DoctorReviewPage({
   const [dailyReports, setDailyReports] = useState<DailyReportRecord[]>([]);
   const [screenings, setScreenings] = useState<WeeklyScreeningRecord[]>([]);
   const [observations, setObservations] = useState<ObservationRecord[]>([]);
+  const [revisions, setRevisions] = useState<EntryRevisionRecord[]>([]);
   const [medications, setMedications] = useState<MedicationRecord[]>([]);
   const [carePlan, setCarePlan] = useState<CarePlanRecord | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -144,6 +146,7 @@ export default function DoctorReviewPage({
         nextDailyReports,
         nextScreenings,
         nextObservations,
+        nextRevisions,
         nextMedications,
         nextCarePlan,
       ] = await Promise.all([
@@ -157,6 +160,9 @@ export default function DoctorReviewPage({
         apiRequest<ObservationRecord[]>(
           `/api/observations/${encodeURIComponent(patientId)}`,
         ),
+        apiRequest<EntryRevisionRecord[]>(
+          `/api/entry-revisions/${encodeURIComponent(patientId)}`,
+        ),
         apiRequest<MedicationRecord[]>(
           `/api/medications/${encodeURIComponent(patientId)}`,
         ),
@@ -169,6 +175,7 @@ export default function DoctorReviewPage({
       setDailyReports(nextDailyReports);
       setScreenings(nextScreenings);
       setObservations(nextObservations);
+      setRevisions(nextRevisions);
       setMedications(nextMedications);
       setCarePlan(nextCarePlan);
       setCarePlanForm(createCarePlanForm(nextCarePlan));
@@ -622,7 +629,7 @@ export default function DoctorReviewPage({
                   title="Chart-ready overview"
                   copy="A short summary prepared from mood, sleep, screening, and current clinician-managed information."
                 />
-                <div className="mt-6 rounded-[28px] border border-slate-200 bg-white px-5 py-5 text-sm leading-7 text-slate-700">
+                <div className="mt-6 whitespace-pre-line rounded-[28px] border border-slate-200 bg-white px-5 py-5 text-sm leading-7 text-slate-700">
                   {isLoading ? "Loading the visit summary..." : visitSummary}
                 </div>
               </section>
@@ -678,6 +685,86 @@ export default function DoctorReviewPage({
                     ))
                   ) : (
                     <EmptyPanel message="No clinician or support-worker observations are recorded for this patient yet." />
+                  )}
+                </div>
+              </section>
+
+              <section className="surface-panel">
+                <SectionHeader
+                  eyebrow="Revision History"
+                  title="Original versus edited values"
+                  copy="Recent edits stay visible here so softened answers and high-risk reversals can be reviewed directly."
+                />
+                <div className="mt-6 space-y-3">
+                  {isLoading ? (
+                    <EmptyPanel message="Loading revision history..." />
+                  ) : revisions.length > 0 ? (
+                    revisions.slice(0, 6).map((revision) => {
+                      const changes = getRevisionChanges(revision);
+
+                      return (
+                        <div key={revision.id} className="timeline-card">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="badge bg-slate-100 text-slate-700">
+                              {getRevisionEntityLabel(revision.entityType)}
+                            </span>
+                            <span
+                              className={`badge ${
+                                revision.suspicious
+                                  ? "bg-rose-100 text-rose-900"
+                                  : "bg-amber-100 text-amber-900"
+                              }`}
+                            >
+                              {revision.suspicious ? "Suspicious edit" : "Recorded edit"}
+                            </span>
+                            <span className="text-xs text-slate-500">
+                              {format(new Date(revision.timestamp), "MMM d, yyyy 'at' h:mm a")}
+                            </span>
+                          </div>
+                          <p className="mt-3 text-sm font-semibold text-slate-900">
+                            {revision.summary}
+                          </p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            Updated by {revision.actorUsername}
+                          </p>
+
+                          {changes.length > 0 ? (
+                            <div className="mt-4 grid gap-3">
+                              {changes.map((change) => (
+                                <div
+                                  key={`${revision.id}-${change.key}`}
+                                  className="rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-4"
+                                >
+                                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                    {change.label}
+                                  </p>
+                                  <div className="mt-2 grid gap-2 md:grid-cols-2">
+                                    <div>
+                                      <p className="text-xs font-semibold text-slate-500">
+                                        Original
+                                      </p>
+                                      <p className="mt-1 text-sm text-slate-700">
+                                        {change.before}
+                                      </p>
+                                    </div>
+                                    <div>
+                                      <p className="text-xs font-semibold text-slate-500">
+                                        Edited
+                                      </p>
+                                      <p className="mt-1 text-sm text-slate-900">
+                                        {change.after}
+                                      </p>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <EmptyPanel message="No patient edits are recorded for this patient yet." />
                   )}
                 </div>
               </section>
@@ -1233,6 +1320,129 @@ function EmptyPanel({ message }: { message: string }) {
       {message}
     </div>
   );
+}
+
+function getRevisionEntityLabel(entityType: EntryRevisionRecord["entityType"]) {
+  switch (entityType) {
+    case "emotion":
+      return "Daily check-in";
+    case "daily_report":
+      return "Sleep or meals report";
+    case "weekly_screening":
+      return "Weekly screen";
+    default:
+      return entityType;
+  }
+}
+
+function getRevisionChanges(revision: EntryRevisionRecord) {
+  const beforeValue = parseRevisionJson(revision.beforeJson);
+  const afterValue = parseRevisionJson(revision.afterJson);
+
+  if (!beforeValue || !afterValue) {
+    return [];
+  }
+
+  const ignoredKeys = new Set([
+    "id",
+    "patientId",
+    "timestamp",
+    "updatedAt",
+    "editCount",
+    "suspiciousEditCount",
+    "reliabilityLevel",
+    "crisisLevel",
+    "crisisSummary",
+  ]);
+
+  return Array.from(new Set([...Object.keys(beforeValue), ...Object.keys(afterValue)]))
+    .filter((key) => !ignoredKeys.has(key))
+    .filter((key) => JSON.stringify(beforeValue[key]) !== JSON.stringify(afterValue[key]))
+    .slice(0, 6)
+    .map((key) => ({
+      key,
+      label: formatRevisionFieldLabel(key),
+      before: formatRevisionValue(beforeValue[key]),
+      after: formatRevisionValue(afterValue[key]),
+    }));
+}
+
+function parseRevisionJson(value: string) {
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function formatRevisionFieldLabel(key: string) {
+  const labels: Record<string, string> = {
+    emotion: "Emotion",
+    notes: "Notes",
+    sleepHours: "Sleep hours",
+    stressLevel: "Stress level",
+    cravingLevel: "Craving level",
+    substanceUseToday: "Substance use today",
+    moneyChangedToday: "Big money change",
+    medicationAdherence: "Medication adherence",
+    missedMedicationName: "Missed medication",
+    missedMedicationReason: "Missed medication reason",
+    bedTime: "Bedtime",
+    wakeTime: "Wake time",
+    sleepQuality: "Sleep quality",
+    wakeUps: "Wake-ups",
+    feltRested: "Felt rested",
+    mealsCount: "Meals count",
+    mealsNote: "Meals note",
+    wishedDead: "Felt like not wanting to be here",
+    familyBetterOffDead: "Others better off without you",
+    thoughtsKillingSelf: "Thoughts about harming yourself",
+    thoughtsKillingSelfFrequency: "Safety-thought frequency",
+    currentThoughts: "Current safety thoughts",
+    everTriedToKillSelf: "Past attempt history",
+    attemptTiming: "Most recent attempt timing",
+    depressedHardToFunction: "Low mood affecting function",
+    depressedFrequency: "Low mood frequency",
+    anxiousOnEdge: "Anxiety affecting function",
+    anxiousFrequency: "Anxiety frequency",
+    hopeless: "Hopelessness",
+    couldNotEnjoyThings: "Could not enjoy things",
+    keepingToSelf: "Keeping to self",
+    moreIrritable: "Irritability",
+    substanceUseMoreThanUsual: "More substance use than usual",
+    substanceUseFrequency: "Substance use frequency",
+    sleepTrouble: "Sleep trouble",
+    sleepTroubleFrequency: "Sleep trouble frequency",
+    appetiteChange: "Appetite change",
+    appetiteChangeDirection: "Appetite direction",
+    supportPerson: "Support person",
+    reasonsForLiving: "Reasons for staying safe",
+    copingPlan: "What helps stay safe",
+    needsHelpStayingSafe: "Needs help staying safe",
+  };
+
+  return labels[key] ?? key.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/_/g, " ");
+}
+
+function formatRevisionValue(value: unknown): string {
+  if (value == null || value === "") {
+    return "Not recorded";
+  }
+
+  if (typeof value === "boolean") {
+    return value ? "Yes" : "No";
+  }
+
+  if (typeof value === "number") {
+    return String(value);
+  }
+
+  if (typeof value === "string") {
+    return value.replace(/_/g, " ");
+  }
+
+  return JSON.stringify(value);
 }
 
 function MedicationCard({

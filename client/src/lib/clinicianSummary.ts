@@ -116,7 +116,14 @@ export function buildClinicianSummary(
     screenings.length === 0 &&
     observations.length === 0
   ) {
-    return `What is happening: no patient data is on file for ${patientId}. How serious is it: unknown. Why it matters: there is no recent clinical signal to compare. What to do: collect a current check-in, sleep report, and weekly safety screen.`;
+    return [
+      "CLINICAL SUMMARY NOTE",
+      `Patient: ${patientId}`,
+      "Risk: Unknown",
+      "What is happening: No patient data is on file.",
+      "Why it matters: There is no recent clinical signal to compare.",
+      "What to do: Collect a current check-in, sleep report, and weekly safety screen.",
+    ].join("\n");
   }
 
   const weeklyReview = buildWeeklyPatientReview(
@@ -129,34 +136,38 @@ export function buildClinicianSummary(
   const latestScreening = getLatestWeeklyScreening(screenings);
   const latestObservation = observations[0] ?? null;
   const screeningText = latestScreening
-    ? `Latest weekly screen: ${getWeeklyScreeningDispositionLabel(
+    ? `${getWeeklyScreeningDispositionLabel(
         getWeeklyScreeningDisposition(latestScreening),
       )} on ${format(new Date(latestScreening.timestamp), "MMM d")}.`
     : "No weekly safety screen is on file.";
   const observationText = latestObservation
-    ? `Latest support input: ${latestObservation.priority} ${latestObservation.observationType.toLowerCase()} note on ${format(
+    ? `${latestObservation.priority} ${latestObservation.observationType.toLowerCase()} note on ${format(
         new Date(latestObservation.timestamp),
         "MMM d",
       )}.`
     : "No recent support note is on file.";
 
   return [
+    "CLINICAL SUMMARY NOTE",
+    `Patient: ${patientId}`,
+    `Risk: ${weeklyReview.risk.riskLevel}${
+      weeklyReview.risk.crisisSummary ? ` | ${weeklyReview.risk.crisisSummary}` : ""
+    }`,
     `What is happening: ${
       weeklyReview.keyChanges.length > 0
-        ? weeklyReview.keyChanges.join(" ")
+        ? weeklyReview.keyChanges.join("; ")
         : "No major change signal was detected."
-    }`,
-    `How serious is it: ${weeklyReview.risk.riskLevel} priority${
-      weeklyReview.risk.crisisSummary ? `. ${weeklyReview.risk.crisisSummary}` : "."
     }`,
     `Why it matters: ${
       weeklyReview.risk.reasons.length > 0
-        ? weeklyReview.risk.reasons.join(" ")
+        ? weeklyReview.risk.reasons.join("; ")
         : "No major review reason was detected."
-    } ${screeningText} ${observationText}`,
+    }`,
     `What to do: ${weeklyReview.suggestedActions.join(" ")}`,
     `Reliability: ${weeklyReview.risk.reliabilityLevel}. ${weeklyReview.risk.reliabilitySummary}${
       weeklyReview.risk.mismatchSummary ? ` ${weeklyReview.risk.mismatchSummary}` : ""
     }`,
-  ].join(" ");
+    `Latest weekly screen: ${screeningText}`,
+    `Latest support input: ${observationText}`,
+  ].join("\n");
 }

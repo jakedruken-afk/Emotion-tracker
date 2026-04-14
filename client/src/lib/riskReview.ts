@@ -169,6 +169,13 @@ export function buildPatientRiskSnapshot(
     }
   }
 
+  if (whatChanged.length >= 2) {
+    score += 2;
+    reasons.push("Multiple clinically meaningful changes were detected this week");
+  } else if (whatChanged.length === 1) {
+    score += 1;
+  }
+
   if (recentLogs.some((log) => (log.stressLevel ?? 0) >= 8)) {
     score += 2;
   }

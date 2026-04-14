@@ -7,7 +7,7 @@ import type {
   ObservationRecord,
   WeeklyScreeningRecord,
 } from "@shared/contracts";
-import { buildClinicianSummary, getReviewSignals } from "./clinicianSummary";
+import { getReviewSignals } from "./clinicianSummary";
 import { buildWeeklyPatientReview, type PatientRiskSnapshot } from "./riskReview";
 
 type DoctorReviewInput = {
@@ -22,7 +22,7 @@ type DoctorReviewInput = {
 };
 
 export function buildDoctorVisitSummary(input: DoctorReviewInput) {
-  const baseSummary = buildClinicianSummary(
+  const weeklyReview = buildWeeklyPatientReview(
     input.patientId,
     input.logs,
     input.dailyReports,
@@ -30,20 +30,52 @@ export function buildDoctorVisitSummary(input: DoctorReviewInput) {
     input.observations,
   );
   const activeMedications = input.medications.filter((medication) => medication.isActive);
+  const activeMedicationText =
+    activeMedications.length > 0
+      ? activeMedications
+          .slice(0, 4)
+          .map((medication) => medication.medicationName)
+          .join(", ")
+      : "No active medications listed.";
   const carePlanText = input.carePlan
-    ? `Care plan updated by ${input.carePlan.updatedBy} on ${format(
+    ? `Updated by ${input.carePlan.updatedBy} on ${format(
         new Date(input.carePlan.updatedAt),
         "MMM d, yyyy 'at' h:mm a",
       )}.`
     : "No clinician care plan is on file.";
-  const medicationText =
-    activeMedications.length > 0
-      ? `${activeMedications.length} active medication${
-          activeMedications.length === 1 ? "" : "s"
-        } are listed.`
-      : "No active medications are listed.";
+  const latestObservation = input.observations[0];
 
-  return `${baseSummary} ${medicationText} ${carePlanText}`;
+  return [
+    "DOCTOR REVIEW NOTE",
+    `Patient: ${input.patientId}`,
+    `Risk: ${input.risk.riskLevel}${
+      input.risk.crisisSummary ? ` | ${input.risk.crisisSummary}` : ""
+    }`,
+    `What is happening: ${
+      weeklyReview.keyChanges.length > 0
+        ? weeklyReview.keyChanges.join("; ")
+        : "No major change signal was detected."
+    }`,
+    `Why it matters: ${
+      input.risk.reasons.length > 0
+        ? input.risk.reasons.join("; ")
+        : "No major review reason was detected."
+    }`,
+    `What to do today: ${input.risk.suggestedActions.join(" ")}`,
+    `Reliability: ${input.risk.reliabilityLevel}. ${input.risk.reliabilitySummary}${
+      input.risk.mismatchSummary ? ` ${input.risk.mismatchSummary}` : ""
+    }`,
+    `Medication context: ${activeMedicationText}`,
+    `Care plan: ${carePlanText}`,
+    `Latest support note: ${
+      latestObservation
+        ? `${latestObservation.priority} ${latestObservation.observationType.toLowerCase()} note on ${format(
+            new Date(latestObservation.timestamp),
+            "MMM d, yyyy",
+          )}.`
+        : "No recent support note is on file."
+    }`,
+  ].join("\n");
 }
 
 export function buildDoctorQuestions(input: DoctorReviewInput) {
