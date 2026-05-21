@@ -17,6 +17,7 @@ import {
   type InviteRecord,
   type PatientAssignmentRecord,
   type PatientSummary,
+  type SessionMode,
   type StaffSummary,
   type UpdateConsent,
   type UserRole,
@@ -96,6 +97,7 @@ export async function loginWithPassword(
   password: string,
   expectedRole: UserRole | undefined,
   metadata: RequestMetadata,
+  sessionMode: SessionMode = "cookie",
 ) {
   const user = getStoredUserByUsername(username);
 
@@ -154,6 +156,7 @@ export async function loginWithPassword(
   return {
     user: authUserSchema.parse(user),
     sessionToken,
+    sessionMode,
   };
 }
 
@@ -265,6 +268,7 @@ export async function acceptInvite(
   token: string,
   password: string,
   metadata: RequestMetadata,
+  sessionMode: SessionMode = "cookie",
 ) {
   const tokenHash = hashToken(token);
   const invite = db
@@ -349,6 +353,7 @@ export async function acceptInvite(
   return {
     user: authUserSchema.parse(createdUser),
     sessionToken,
+    sessionMode,
   };
 }
 
@@ -477,6 +482,8 @@ export async function getPatientSummaries(actor: AuthUser) {
         sleep_reports AS sleepReports,
         weekly_screening AS weeklyScreening,
         gps_tracking AS gpsTracking,
+        acknowledge_staffed_hours AS acknowledgeStaffedHours,
+        acknowledge_emergency_limits AS acknowledgeEmergencyLimits,
         accepted_at AS acceptedAt,
         updated_at AS updatedAt
       FROM consent_records
@@ -521,6 +528,8 @@ export async function getPatientSummaries(actor: AuthUser) {
         sleepReports: Boolean(row.sleepReports),
         weeklyScreening: Boolean(row.weeklyScreening),
         gpsTracking: Boolean(row.gpsTracking),
+        acknowledgeStaffedHours: Boolean(row.acknowledgeStaffedHours),
+        acknowledgeEmergencyLimits: Boolean(row.acknowledgeEmergencyLimits),
         acceptedAt: String(row.acceptedAt),
         updatedAt: String(row.updatedAt),
       }),
@@ -570,6 +579,8 @@ export async function getConsentByPatientId(patientId: string) {
         sleep_reports AS sleepReports,
         weekly_screening AS weeklyScreening,
         gps_tracking AS gpsTracking,
+        acknowledge_staffed_hours AS acknowledgeStaffedHours,
+        acknowledge_emergency_limits AS acknowledgeEmergencyLimits,
         accepted_at AS acceptedAt,
         updated_at AS updatedAt
       FROM consent_records
@@ -596,15 +607,19 @@ export async function upsertConsent(
       sleep_reports,
       weekly_screening,
       gps_tracking,
+      acknowledge_staffed_hours,
+      acknowledge_emergency_limits,
       accepted_at,
       updated_at
     )
-    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     ON CONFLICT(patient_id) DO UPDATE SET
       mood_tracking = excluded.mood_tracking,
       sleep_reports = excluded.sleep_reports,
       weekly_screening = excluded.weekly_screening,
       gps_tracking = excluded.gps_tracking,
+      acknowledge_staffed_hours = excluded.acknowledge_staffed_hours,
+      acknowledge_emergency_limits = excluded.acknowledge_emergency_limits,
       updated_at = CURRENT_TIMESTAMP
   `).run(
     patientId,
@@ -612,6 +627,8 @@ export async function upsertConsent(
     consent.sleepReports ? 1 : 0,
     consent.weeklyScreening ? 1 : 0,
     consent.gpsTracking ? 1 : 0,
+    consent.acknowledgeStaffedHours ? 1 : 0,
+    consent.acknowledgeEmergencyLimits ? 1 : 0,
   );
 
   const savedConsent = await getConsentByPatientId(patientId);
@@ -743,7 +760,7 @@ export async function getSessionContext(req: Request): Promise<SessionContext | 
   }
 
   const cookies = parseCookies(req.headers.cookie);
-  const rawToken = cookies[sessionCookieName];
+  const rawToken = req.get("x-lamb-session")?.trim() || cookies[sessionCookieName];
   if (!rawToken) {
     return null;
   }
@@ -974,6 +991,8 @@ function mapConsent(row: Record<string, unknown>): ConsentRecord {
     sleepReports: Boolean(row.sleepReports),
     weeklyScreening: Boolean(row.weeklyScreening),
     gpsTracking: Boolean(row.gpsTracking),
+    acknowledgeStaffedHours: Boolean(row.acknowledgeStaffedHours),
+    acknowledgeEmergencyLimits: Boolean(row.acknowledgeEmergencyLimits),
     acceptedAt: String(row.acceptedAt),
     updatedAt: String(row.updatedAt),
   });

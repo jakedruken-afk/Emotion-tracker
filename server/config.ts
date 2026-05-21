@@ -24,6 +24,34 @@ export const inviteTtlHours = Number(process.env.INVITE_TTL_HOURS ?? 168);
 export const appBaseUrl =
   process.env.APP_BASE_URL ??
   (isProduction ? "http://localhost:3001" : "http://localhost:5173");
+const defaultMobileOrigins = [
+  "capacitor://localhost",
+  "ionic://localhost",
+  "https://localhost",
+  "http://localhost",
+];
+const configuredMobileOrigins = (process.env.MOBILE_ALLOWED_ORIGINS ?? "")
+  .split(",")
+  .map((value) => value.trim())
+  .filter((value) => value.length > 0);
+const appBaseOrigin = (() => {
+  try {
+    return new URL(appBaseUrl).origin;
+  } catch {
+    return null;
+  }
+})();
+export const allowedCorsOrigins = Array.from(
+  new Set(
+    [
+      appBaseOrigin,
+      "http://localhost:5173",
+      "http://localhost:3001",
+      ...defaultMobileOrigins,
+      ...configuredMobileOrigins,
+    ].filter((value): value is string => value != null && value.length > 0),
+  ),
+);
 export const databasePath =
   process.env.DATABASE_PATH ??
   path.resolve(process.cwd(), "data", "emotion-tracker.db");

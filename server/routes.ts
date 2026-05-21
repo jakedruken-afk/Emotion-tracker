@@ -2,7 +2,11 @@ import type { Express, Request, Response } from "express";
 import { z } from "zod";
 import {
   acceptInviteSchema,
+  acknowledgeObservationSchema,
+  authSessionSchema,
   type DailyReportRecord,
+  demoModeStatusSchema,
+  demoScenarioIdOptions,
   type EmotionRecord,
   type WeeklyScreeningRecord,
   authUserSchema,
@@ -27,6 +31,7 @@ import {
   observationSchema,
   patientAssignmentSchema,
   patientSummarySchema,
+  pilotMetricsSchema,
   staffSummarySchema,
   updateCarePlanSchema,
   updateConsentSchema,
@@ -36,6 +41,7 @@ import {
   updateWeeklyScreeningSchema,
   weeklyScreeningSchema,
   type AuthUser,
+  formatDisplayName,
 } from "../shared/contracts";
 import {
   SYSTEM_ALERT_AUTHOR,
@@ -44,6 +50,7 @@ import {
   evaluateSuspiciousEdit,
   summarizeRevision,
 } from "./clinicalMonitoring";
+import { getDemoModeStatus, resetDemoScenario } from "./demoMode";
 import {
   assertPatientAccess,
   clearSessionCookie,
@@ -65,6 +72,8 @@ import {
   acceptInvite,
 } from "./auth";
 import { db } from "./db";
+import { enableDemoSeed } from "./config";
+import { buildPilotMetrics } from "./pilotMetrics";
 import { storage } from "./storage";
 
 function getZodMessage(error: z.ZodError) {
@@ -106,7 +115,12 @@ async function requireConsent(
   failureMessage: string,
 ) {
   const consent = await getConsentByPatientId(patientId);
-  if (!consent || !consent[consentKey]) {
+  if (
+    !consent ||
+    !consent[consentKey] ||
+    !consent.acknowledgeStaffedHours ||
+    !consent.acknowledgeEmergencyLimits
+  ) {
     res.status(403).json({ message: failureMessage });
     return false;
   }
@@ -167,6 +181,8 @@ async function maybeCreateCrisisAlert(
   previousLevel: "none" | "high" | "critical",
   nextLevel: "none" | "high" | "critical",
   summary: string | null,
+  linkedEntityType: "emotion" | "daily_report" | "weekly_screening",
+  linkedEntityId: number,
 ) {
   if (nextLevel === "none") {
     return;
@@ -188,6 +204,9 @@ async function maybeCreateCrisisAlert(
       "Patient text suggests thoughts about self-harm or an immediate need for safety review.",
     priority: nextLevel === "critical" ? "Critical" : "High",
     supportWorkerName: SYSTEM_ALERT_AUTHOR,
+    linkedEntityType,
+    linkedEntityId,
+    systemGenerated: true,
   });
 
   if (!req.sessionUser) {
@@ -203,7 +222,7 @@ async function maybeCreateCrisisAlert(
     action: "crisis_alert.created",
     entityType: "observation",
     entityId: null,
-    details: JSON.stringify({ level: nextLevel, summary }),
+    details: JSON.stringify({ level: nextLevel, summary, linkedEntityType, linkedEntityId }),
     ipAddress: metadata.ipAddress,
     userAgent: metadata.userAgent,
   });
@@ -227,20 +246,36 @@ export function registerRoutes(app: Express) {
 
   app.post("/api/auth/login", async (req, res) => {
     try {
-      const { expectedRole, username, password } = loginRequestSchema.parse(req.body);
+      const {
+        expectedRole,
+        username,
+        password,
+        sessionMode = "cookie",
+      } = loginRequestSchema.parse(req.body);
       const authResult = await loginWithPassword(
         username,
         password,
         expectedRole,
         getRequestMetadata(req),
+        sessionMode,
       );
 
       if (!authResult) {
         return res.status(401).json({ message: "Invalid username or password" });
       }
 
-      setSessionCookie(res, authResult.sessionToken);
-      return res.json(authUserSchema.parse(authResult.user));
+      if (authResult.sessionMode === "cookie") {
+        setSessionCookie(res, authResult.sessionToken);
+      }
+
+      return res.json(
+        authSessionSchema.parse({
+          user: authResult.user,
+          sessionMode: authResult.sessionMode,
+          sessionToken:
+            authResult.sessionMode === "header" ? authResult.sessionToken : null,
+        }),
+      );
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: getZodMessage(error) });
@@ -266,10 +301,26 @@ export function registerRoutes(app: Express) {
 
   app.post("/api/invites/accept", async (req, res) => {
     try {
-      const { token, password } = acceptInviteSchema.parse(req.body);
-      const authResult = await acceptInvite(token, password, getRequestMetadata(req));
-      setSessionCookie(res, authResult.sessionToken);
-      return res.status(201).json(authUserSchema.parse(authResult.user));
+      const { token, password, sessionMode = "cookie" } = acceptInviteSchema.parse(req.body);
+      const authResult = await acceptInvite(
+        token,
+        password,
+        getRequestMetadata(req),
+        sessionMode,
+      );
+
+      if (authResult.sessionMode === "cookie") {
+        setSessionCookie(res, authResult.sessionToken);
+      }
+
+      return res.status(201).json(
+        authSessionSchema.parse({
+          user: authResult.user,
+          sessionMode: authResult.sessionMode,
+          sessionToken:
+            authResult.sessionMode === "header" ? authResult.sessionToken : null,
+        }),
+      );
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: getZodMessage(error) });
@@ -322,6 +373,60 @@ export function registerRoutes(app: Express) {
       });
       return res.json(patients.map((patient) => patientSummarySchema.parse(patient)));
     } catch {
+      return res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.get("/api/pilot-metrics", requireRole("support"), async (_req, res) => {
+    try {
+      return res.json(pilotMetricsSchema.parse(buildPilotMetrics()));
+    } catch {
+      return res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.get("/api/demo-mode", requireRole("support"), async (_req, res) => {
+    try {
+      return res.json(demoModeStatusSchema.parse(getDemoModeStatus()));
+    } catch {
+      return res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.post("/api/demo-mode/reset/:scenarioId", requireRole("support"), async (req, res) => {
+    try {
+      if (!enableDemoSeed) {
+        return res
+          .status(403)
+          .json({ message: "Synthetic demo mode is disabled in this environment" });
+      }
+
+      const scenarioId = z.enum(demoScenarioIdOptions).parse(req.params.scenarioId);
+      const status = await resetDemoScenario(getRequestUser(req), scenarioId);
+
+      await createAuditLog({
+        actorUserId: getRequestUser(req).id,
+        actorRole: getRequestUser(req).role,
+        actorUsername: getRequestUser(req).username,
+        patientId: null,
+        action: "demo_mode.reset",
+        entityType: "demo_mode",
+        entityId: scenarioId,
+        details: JSON.stringify({ scenarioId }),
+        ipAddress: getRequestMetadata(req).ipAddress,
+        userAgent: getRequestMetadata(req).userAgent,
+      });
+
+      return res.json(demoModeStatusSchema.parse(status));
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: getZodMessage(error) });
+      }
+
+      if (error instanceof Error) {
+        return res.status(400).json({ message: error.message });
+      }
+
       return res.status(500).json({ message: "Internal server error" });
     }
   });
@@ -427,7 +532,15 @@ export function registerRoutes(app: Express) {
         crisisSummary: crisis.summary,
         reliabilityLevel: "High",
       });
-      await maybeCreateCrisisAlert(req, emotion.patientId, "none", createdEmotion.crisisLevel, createdEmotion.crisisSummary);
+      await maybeCreateCrisisAlert(
+        req,
+        emotion.patientId,
+        "none",
+        createdEmotion.crisisLevel,
+        createdEmotion.crisisSummary,
+        "emotion",
+        createdEmotion.id,
+      );
       await createAuditLog({
         actorUserId: user.id,
         actorRole: user.role,
@@ -530,6 +643,8 @@ export function registerRoutes(app: Express) {
         existingEmotion.crisisLevel,
         updatedEmotion.crisisLevel,
         updatedEmotion.crisisSummary,
+        "emotion",
+        updatedEmotion.id,
       );
 
       await createAuditLog({
@@ -610,6 +725,8 @@ export function registerRoutes(app: Express) {
         "none",
         createdReport.crisisLevel,
         createdReport.crisisSummary,
+        "daily_report",
+        createdReport.id,
       );
       await createAuditLog({
         actorUserId: user.id,
@@ -701,6 +818,8 @@ export function registerRoutes(app: Express) {
         existingReport.crisisLevel,
         updatedReport.crisisLevel,
         updatedReport.crisisSummary,
+        "daily_report",
+        updatedReport.id,
       );
 
       await createAuditLog({
@@ -797,6 +916,78 @@ export function registerRoutes(app: Express) {
     }
   });
 
+  app.patch("/api/observations/:id/acknowledge", requireRole("support"), async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ message: "Observation ID must be a positive number" });
+      }
+
+      const existingObservation = await storage.getObservationById(id);
+      if (!existingObservation) {
+        return res.status(404).json({ message: "Observation not found" });
+      }
+
+      if (!(await ensurePatientAccess(req, res, existingObservation.patientId))) {
+        return;
+      }
+
+      if (
+        existingObservation.observationType !== "Alert" &&
+        existingObservation.priority !== "Critical"
+      ) {
+        return res.status(400).json({
+          message: "Only alert observations or critical-priority notes can be acknowledged",
+        });
+      }
+
+      const user = getRequestUser(req);
+      if (
+        existingObservation.acknowledgedByUserId != null &&
+        existingObservation.acknowledgedByUserId !== user.id
+      ) {
+        return res.status(409).json({
+          message: `This alert is already owned by ${existingObservation.acknowledgedByName ?? "another support worker"}`,
+        });
+      }
+
+      const { ownershipNote } = acknowledgeObservationSchema.parse(req.body ?? {});
+      const updatedObservation = await storage.acknowledgeObservation(id, {
+        acknowledgedByUserId: user.id,
+        acknowledgedByName: formatDisplayName(user),
+        ownershipNote,
+      });
+
+      await createAuditLog({
+        actorUserId: user.id,
+        actorRole: user.role,
+        actorUsername: user.username,
+        patientId: updatedObservation.patientId,
+        action: "observation.acknowledged",
+        entityType: "observation",
+        entityId: String(updatedObservation.id),
+        details: JSON.stringify({
+          linkedEntityType: updatedObservation.linkedEntityType,
+          linkedEntityId: updatedObservation.linkedEntityId,
+        }),
+        ipAddress: getRequestMetadata(req).ipAddress,
+        userAgent: getRequestMetadata(req).userAgent,
+      });
+
+      return res.json(observationSchema.parse(updatedObservation));
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: getZodMessage(error) });
+      }
+
+      if (error instanceof Error && error.message.includes("not found")) {
+        return res.status(404).json({ message: error.message });
+      }
+
+      return res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
   app.get("/api/observations", requireRole("support"), async (req, res) => {
     try {
       const allowedPatientIds = new Set(await getAllowedPatientIds(getRequestUser(req)));
@@ -871,6 +1062,8 @@ export function registerRoutes(app: Express) {
         "none",
         createdScreening.crisisLevel,
         createdScreening.crisisSummary,
+        "weekly_screening",
+        createdScreening.id,
       );
       await createAuditLog({
         actorUserId: user.id,
@@ -971,6 +1164,8 @@ export function registerRoutes(app: Express) {
         existingScreening.crisisLevel,
         updatedScreening.crisisLevel,
         updatedScreening.crisisSummary,
+        "weekly_screening",
+        updatedScreening.id,
       );
 
       await createAuditLog({

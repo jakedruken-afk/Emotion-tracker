@@ -57,6 +57,14 @@ export async function initializeDatabase() {
       observation TEXT NOT NULL,
       priority TEXT NOT NULL,
       support_worker_name TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'open',
+      ownership_note TEXT,
+      acknowledged_by_user_id INTEGER,
+      acknowledged_by_name TEXT,
+      acknowledged_at TEXT,
+      linked_entity_type TEXT,
+      linked_entity_id INTEGER,
+      system_generated INTEGER NOT NULL DEFAULT 0,
       timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -185,6 +193,8 @@ export async function initializeDatabase() {
       sleep_reports INTEGER NOT NULL DEFAULT 0,
       weekly_screening INTEGER NOT NULL DEFAULT 0,
       gps_tracking INTEGER NOT NULL DEFAULT 0,
+      acknowledge_staffed_hours INTEGER NOT NULL DEFAULT 0,
+      acknowledge_emergency_limits INTEGER NOT NULL DEFAULT 0,
       accepted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
@@ -217,11 +227,20 @@ export async function initializeDatabase() {
       suspicious INTEGER NOT NULL DEFAULT 0,
       timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS demo_mode_state (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      active_scenario_id TEXT,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 
   ensureEmotionColumns();
+  ensureObservationColumns();
   ensureDailyReportColumns();
   ensureWeeklyScreeningColumns();
+  ensureConsentColumns();
+  ensureDemoModeState();
   await seedDemoUsers();
 }
 
@@ -351,6 +370,45 @@ function ensureDailyReportColumns() {
   }
 }
 
+function ensureObservationColumns() {
+  const existingColumns = db
+    .prepare("PRAGMA table_info(observations)")
+    .all() as Array<{ name?: string }>;
+  const columnNames = new Set(existingColumns.map((column) => column.name));
+
+  if (!columnNames.has("status")) {
+    db.exec("ALTER TABLE observations ADD COLUMN status TEXT NOT NULL DEFAULT 'open'");
+  }
+
+  if (!columnNames.has("ownership_note")) {
+    db.exec("ALTER TABLE observations ADD COLUMN ownership_note TEXT");
+  }
+
+  if (!columnNames.has("acknowledged_by_user_id")) {
+    db.exec("ALTER TABLE observations ADD COLUMN acknowledged_by_user_id INTEGER");
+  }
+
+  if (!columnNames.has("acknowledged_by_name")) {
+    db.exec("ALTER TABLE observations ADD COLUMN acknowledged_by_name TEXT");
+  }
+
+  if (!columnNames.has("acknowledged_at")) {
+    db.exec("ALTER TABLE observations ADD COLUMN acknowledged_at TEXT");
+  }
+
+  if (!columnNames.has("linked_entity_type")) {
+    db.exec("ALTER TABLE observations ADD COLUMN linked_entity_type TEXT");
+  }
+
+  if (!columnNames.has("linked_entity_id")) {
+    db.exec("ALTER TABLE observations ADD COLUMN linked_entity_id INTEGER");
+  }
+
+  if (!columnNames.has("system_generated")) {
+    db.exec("ALTER TABLE observations ADD COLUMN system_generated INTEGER NOT NULL DEFAULT 0");
+  }
+}
+
 function ensureWeeklyScreeningColumns() {
   const existingColumns = db
     .prepare("PRAGMA table_info(weekly_screenings)")
@@ -413,6 +471,33 @@ function ensureWeeklyScreeningColumns() {
   if (!columnNames.has("crisis_summary")) {
     db.exec("ALTER TABLE weekly_screenings ADD COLUMN crisis_summary TEXT");
   }
+}
+
+function ensureConsentColumns() {
+  const existingColumns = db
+    .prepare("PRAGMA table_info(consent_records)")
+    .all() as Array<{ name?: string }>;
+  const columnNames = new Set(existingColumns.map((column) => column.name));
+
+  if (!columnNames.has("acknowledge_staffed_hours")) {
+    db.exec(
+      "ALTER TABLE consent_records ADD COLUMN acknowledge_staffed_hours INTEGER NOT NULL DEFAULT 0",
+    );
+  }
+
+  if (!columnNames.has("acknowledge_emergency_limits")) {
+    db.exec(
+      "ALTER TABLE consent_records ADD COLUMN acknowledge_emergency_limits INTEGER NOT NULL DEFAULT 0",
+    );
+  }
+}
+
+function ensureDemoModeState() {
+  db.prepare(`
+    INSERT INTO demo_mode_state (id, active_scenario_id, updated_at)
+    VALUES (1, NULL, CURRENT_TIMESTAMP)
+    ON CONFLICT(id) DO NOTHING
+  `).run();
 }
 
 async function seedDemoUsers() {

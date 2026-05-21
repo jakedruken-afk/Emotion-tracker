@@ -2,7 +2,7 @@ import express, { type NextFunction, type Request, type Response } from "express
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadSessionUser } from "./auth";
-import { trustProxy } from "./config";
+import { allowedCorsOrigins, trustProxy } from "./config";
 import { initializeDatabase } from "./db";
 import { registerRoutes } from "./routes";
 
@@ -13,6 +13,24 @@ const isProductionBundle = path.basename(path.dirname(currentDir)) === "dist";
 if (trustProxy) {
   app.set("trust proxy", 1);
 }
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+
+  if (origin && allowedCorsOrigins.includes(origin)) {
+    res.header("Access-Control-Allow-Origin", origin);
+    res.header("Access-Control-Allow-Credentials", "true");
+    res.header("Access-Control-Allow-Headers", "Content-Type, x-lamb-session");
+    res.header("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
+    res.header("Vary", "Origin");
+  }
+
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(204);
+  }
+
+  next();
+});
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));

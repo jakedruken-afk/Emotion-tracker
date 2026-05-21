@@ -34,6 +34,7 @@ type InviteFormState = {
   username: string;
   firstName: string;
   lastName: string;
+  assignedDoctorId: string;
   assignedStaffUserId: string;
 };
 
@@ -48,9 +49,14 @@ function createEmptyInviteForm(currentUserId: number): InviteFormState {
     username: "",
     firstName: "",
     lastName: "",
+    assignedDoctorId: "",
     assignedStaffUserId: String(currentUserId),
   };
 }
+
+type StaffOption = StaffSummary & {
+  backendRole?: "doctor" | "support_worker";
+};
 
 export default function SupportAccessPage({
   user,
@@ -58,7 +64,7 @@ export default function SupportAccessPage({
   onBack,
 }: SupportAccessPageProps) {
   const [patients, setPatients] = useState<PatientSummary[]>([]);
-  const [staff, setStaff] = useState<StaffSummary[]>([]);
+  const [staff, setStaff] = useState<StaffOption[]>([]);
   const [invites, setInvites] = useState<InviteRecord[]>([]);
   const [inviteForm, setInviteForm] = useState<InviteFormState>(() =>
     createEmptyInviteForm(user.id),
@@ -88,16 +94,24 @@ export default function SupportAccessPage({
     try {
       const [nextPatients, nextStaff, nextInvites] = await Promise.all([
         apiRequest<PatientSummary[]>("/api/patients"),
-        apiRequest<StaffSummary[]>("/api/staff"),
+        apiRequest<StaffOption[]>("/api/staff"),
         apiRequest<InviteRecord[]>("/api/invites"),
       ]);
 
       setPatients(nextPatients);
       setStaff(nextStaff);
       setInvites(nextInvites);
+      const firstDoctor = nextStaff.find((member) => member.backendRole === "doctor");
+      const firstSupportWorker = nextStaff.find((member) => member.backendRole === "support_worker");
       setAssignmentForm((current) => ({
         patientId: current.patientId || nextPatients[0]?.username || "",
         staffUserId: current.staffUserId || String(user.id),
+      }));
+      setInviteForm((current) => ({
+        ...current,
+        assignedDoctorId: current.assignedDoctorId || String(firstDoctor?.id ?? ""),
+        assignedStaffUserId:
+          current.assignedStaffUserId || String(firstSupportWorker?.id ?? user.id),
       }));
     } catch (error) {
       toast({
@@ -126,6 +140,10 @@ export default function SupportAccessPage({
           username: inviteForm.username,
           firstName: inviteForm.firstName,
           lastName: inviteForm.lastName,
+          doctor_id:
+            inviteForm.role === "patient" && inviteForm.assignedDoctorId
+              ? Number(inviteForm.assignedDoctorId)
+              : null,
           assignedStaffUserId:
             inviteForm.role === "patient" && inviteForm.assignedStaffUserId
               ? Number(inviteForm.assignedStaffUserId)
@@ -354,28 +372,59 @@ export default function SupportAccessPage({
                   />
                 </div>
                 {inviteForm.role === "patient" ? (
-                  <div className="md:col-span-2">
-                    <label className="label" htmlFor="invite-assigned-staff">
-                      Assigned staff
-                    </label>
-                    <select
-                      id="invite-assigned-staff"
-                      className="input"
-                      value={inviteForm.assignedStaffUserId}
-                      onChange={(event) =>
-                        setInviteForm((current) => ({
-                          ...current,
-                          assignedStaffUserId: event.target.value,
-                        }))
-                      }
-                    >
-                      {staff.map((member) => (
-                        <option key={member.id} value={member.id}>
-                          {formatDisplayName(member)}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                  <>
+                    <div>
+                      <label className="label" htmlFor="invite-assigned-doctor">
+                        Assigned doctor
+                      </label>
+                      <select
+                        id="invite-assigned-doctor"
+                        className="input"
+                        value={inviteForm.assignedDoctorId}
+                        onChange={(event) =>
+                          setInviteForm((current) => ({
+                            ...current,
+                            assignedDoctorId: event.target.value,
+                          }))
+                        }
+                      >
+                        <option value="">Choose a doctor</option>
+                        {staff
+                          .filter((member) => member.backendRole === "doctor")
+                          .map((member) => (
+                            <option key={member.id} value={member.id}>
+                              {formatDisplayName(member)}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="label" htmlFor="invite-assigned-staff">
+                        Assigned support worker
+                      </label>
+                      <select
+                        id="invite-assigned-staff"
+                        className="input"
+                        value={inviteForm.assignedStaffUserId}
+                        onChange={(event) =>
+                          setInviteForm((current) => ({
+                            ...current,
+                            assignedStaffUserId: event.target.value,
+                          }))
+                        }
+                      >
+                        <option value="">None yet</option>
+                        {staff
+                          .filter((member) => member.backendRole === "support_worker")
+                          .map((member) => (
+                            <option key={member.id} value={member.id}>
+                              {formatDisplayName(member)}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+                  </>
                 ) : null}
               </div>
 

@@ -14,6 +14,7 @@ import type {
   AuthUser,
   CarePlanRecord,
   DailyReportRecord,
+  DemoModeStatus,
   EntryRevisionRecord,
   EmotionLog,
   EmotionRecord,
@@ -81,6 +82,10 @@ type DoctorCriticalAlertTarget = {
   detail: string;
   targetId: string;
   timestamp: string;
+  status: "open" | "acknowledged";
+  acknowledgedByName: string | null;
+  acknowledgedAt: string | null;
+  ownershipNote: string | null;
 };
 
 function createEmptyMedicationForm(): MedicationFormState {
@@ -133,6 +138,7 @@ export default function DoctorReviewPage({
   const [revisions, setRevisions] = useState<EntryRevisionRecord[]>([]);
   const [medications, setMedications] = useState<MedicationRecord[]>([]);
   const [carePlan, setCarePlan] = useState<CarePlanRecord | null>(null);
+  const [demoMode, setDemoMode] = useState<DemoModeStatus | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [showCriticalAlert, setShowCriticalAlert] = useState(false);
   const [pendingScrollTargetId, setPendingScrollTargetId] = useState<string | null>(null);
@@ -158,6 +164,7 @@ export default function DoctorReviewPage({
         nextRevisions,
         nextMedications,
         nextCarePlan,
+        nextDemoMode,
       ] = await Promise.all([
         apiRequest<EmotionRecord[]>(`/api/emotions/${encodeURIComponent(patientId)}`),
         apiRequest<DailyReportRecord[]>(
@@ -178,6 +185,7 @@ export default function DoctorReviewPage({
         apiRequest<CarePlanRecord | null>(
           `/api/care-plan/${encodeURIComponent(patientId)}`,
         ),
+        apiRequest<DemoModeStatus>("/api/demo-mode"),
       ]);
 
       setEntries(nextEntries);
@@ -188,6 +196,7 @@ export default function DoctorReviewPage({
       setMedications(nextMedications);
       setCarePlan(nextCarePlan);
       setCarePlanForm(createCarePlanForm(nextCarePlan));
+      setDemoMode(nextDemoMode);
     } catch (error) {
       toast({
         title: "Could not load the doctor review",
@@ -254,6 +263,16 @@ export default function DoctorReviewPage({
   const activeMedications = medications.filter((medication) => medication.isActive);
   const inactiveMedications = medications.filter((medication) => !medication.isActive);
   const criticalAlert = getDoctorCriticalAlert(entries, dailyReports, screenings, observations);
+  const isSyntheticDemoPatient =
+    demoMode?.activeScenarioId != null && patientId.toLowerCase().startsWith("demo-");
+
+  const showSyntheticDemoToast = (action: string) => {
+    toast({
+      title: "Synthetic demo safeguards are active",
+      description: `${action} is disabled while this synthetic demo scenario is active.`,
+      variant: "info",
+    });
+  };
 
   useEffect(() => {
     setShowCriticalAlert(Boolean(criticalAlert));
@@ -288,6 +307,11 @@ export default function DoctorReviewPage({
   };
 
   const handleCopySummary = async () => {
+    if (isSyntheticDemoPatient) {
+      showSyntheticDemoToast("Copying the visit summary");
+      return;
+    }
+
     try {
       await navigator.clipboard.writeText(visitSummary);
       toast({
@@ -305,6 +329,11 @@ export default function DoctorReviewPage({
   };
 
   const handleCopyQuestions = async () => {
+    if (isSyntheticDemoPatient) {
+      showSyntheticDemoToast("Copying visit questions");
+      return;
+    }
+
     try {
       await navigator.clipboard.writeText(questionText);
       toast({
@@ -322,6 +351,11 @@ export default function DoctorReviewPage({
   };
 
   const handlePrint = () => {
+    if (isSyntheticDemoPatient) {
+      showSyntheticDemoToast("Printing the doctor review");
+      return;
+    }
+
     window.print();
   };
 
@@ -493,7 +527,12 @@ export default function DoctorReviewPage({
               <ArrowLeft className="h-4 w-4" />
               Back to Support
             </button>
-            <button type="button" className="btn btn-secondary" onClick={handlePrint}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={handlePrint}
+              disabled={isSyntheticDemoPatient}
+            >
               <Printer className="h-4 w-4" />
               Print Review
             </button>
@@ -527,12 +566,29 @@ export default function DoctorReviewPage({
                 plan in one cleaner doctor-facing layout.
               </p>
 
+              {isSyntheticDemoPatient ? (
+                <div className="mt-5 rounded-[24px] border border-amber-200 bg-amber-50 px-4 py-4 text-sm leading-6 text-amber-950">
+                  Synthetic demo mode is active for this patient. Copy and print actions stay
+                  disabled so fake patient material does not get mixed into live pilot workflows.
+                </div>
+              ) : null}
+
               <div className="mt-6 flex flex-wrap gap-3 no-print">
-                <button type="button" className="btn btn-primary" onClick={handleCopySummary}>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={handleCopySummary}
+                  disabled={isSyntheticDemoPatient}
+                >
                   <Copy className="h-4 w-4" />
                   Copy Visit Summary
                 </button>
-                <button type="button" className="btn btn-secondary" onClick={handleCopyQuestions}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={handleCopyQuestions}
+                  disabled={isSyntheticDemoPatient}
+                >
                   <ClipboardList className="h-4 w-4" />
                   Copy Questions
                 </button>
@@ -740,6 +796,15 @@ export default function DoctorReviewPage({
                           <span className="badge bg-amber-100 text-amber-900">
                             {observation.priority}
                           </span>
+                          <span
+                            className={`badge ${
+                              observation.status === "acknowledged"
+                                ? "bg-emerald-100 text-emerald-800"
+                                : "bg-rose-100 text-rose-900"
+                            }`}
+                          >
+                            {observation.status === "acknowledged" ? "Owned" : "Open"}
+                          </span>
                           <span className="text-xs text-slate-500">
                             {format(new Date(observation.timestamp), "MMM d, yyyy 'at' h:mm a")}
                           </span>
@@ -749,6 +814,11 @@ export default function DoctorReviewPage({
                         </p>
                         <p className="mt-2 text-sm leading-6 text-slate-700">
                           {observation.observation}
+                        </p>
+                        <p className="mt-3 text-xs leading-5 text-slate-500">
+                          {observation.status === "acknowledged"
+                            ? `Owned by ${observation.acknowledgedByName ?? "support worker"}${observation.acknowledgedAt ? ` on ${format(new Date(observation.acknowledgedAt), "MMM d, yyyy 'at' h:mm a")}` : ""}.`
+                            : "No support worker has acknowledged ownership yet."}
                         </p>
                       </div>
                     ))
@@ -1417,6 +1487,12 @@ function DoctorCriticalAlertOverlay({
         </h2>
         <p className="mt-4 text-base leading-7 text-slate-700">{alert.summary}</p>
         <p className="mt-3 text-sm leading-6 text-slate-600">{alert.detail}</p>
+        <div className="mt-4 rounded-[22px] border border-rose-200 bg-rose-50 px-4 py-4 text-sm leading-6 text-rose-900">
+          {alert.status === "acknowledged"
+            ? `Owned by ${alert.acknowledgedByName ?? "a support worker"}${alert.acknowledgedAt ? ` since ${format(new Date(alert.acknowledgedAt), "MMM d, yyyy 'at' h:mm a")}` : ""}.`
+            : "No support worker has acknowledged ownership yet."}
+          {alert.ownershipNote ? ` ${alert.ownershipNote}` : ""}
+        </div>
         <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-rose-700">
           Click below to jump directly to the triggering record.
         </p>
@@ -1459,6 +1535,11 @@ function DoctorCriticalAlertCallout({
       </h3>
       <p className="mt-3 text-sm leading-6 text-rose-900">{alert.summary}</p>
       <p className="mt-2 text-sm leading-6 text-rose-800">{alert.detail}</p>
+      <p className="mt-3 text-sm leading-6 text-rose-800">
+        {alert.status === "acknowledged"
+          ? `Owned by ${alert.acknowledgedByName ?? "a support worker"}.`
+          : "No support worker has acknowledged ownership yet."}
+      </p>
       <p className="mt-4 text-sm font-semibold text-rose-900">Click to open the triggering record.</p>
     </button>
   );
@@ -1471,6 +1552,42 @@ function getDoctorCriticalAlert(
   observations: ObservationRecord[],
 ): DoctorCriticalAlertTarget | null {
   const candidates: Array<DoctorCriticalAlertTarget & { sortTime: number }> = [];
+
+  for (const observation of observations) {
+    if (observation.priority !== "Critical" && observation.observationType !== "Alert") {
+      continue;
+    }
+
+    let targetId = `doctor-observation-${observation.id}`;
+    if (observation.linkedEntityType === "emotion" && observation.linkedEntityId != null) {
+      targetId = `doctor-entry-${observation.linkedEntityId}`;
+    } else if (
+      observation.linkedEntityType === "daily_report" &&
+      observation.linkedEntityId != null
+    ) {
+      targetId = `doctor-report-${observation.linkedEntityId}`;
+    } else if (
+      observation.linkedEntityType === "weekly_screening" &&
+      observation.linkedEntityId != null
+    ) {
+      targetId = `doctor-screening-${observation.linkedEntityId}`;
+    }
+
+    candidates.push({
+      summary: observation.observation,
+      detail: `Alert recorded on ${format(
+        new Date(observation.timestamp),
+        "MMM d, yyyy 'at' h:mm a",
+      )}.`,
+      targetId,
+      timestamp: observation.timestamp,
+      status: observation.status,
+      acknowledgedByName: observation.acknowledgedByName,
+      acknowledgedAt: observation.acknowledgedAt,
+      ownershipNote: observation.ownershipNote,
+      sortTime: new Date(observation.timestamp).getTime(),
+    });
+  }
 
   for (const entry of entries) {
     if (entry.crisisLevel !== "critical") {
@@ -1485,6 +1602,10 @@ function getDoctorCriticalAlert(
       )}.`,
       targetId: `doctor-entry-${entry.id}`,
       timestamp: entry.timestamp,
+      status: "open",
+      acknowledgedByName: null,
+      acknowledgedAt: null,
+      ownershipNote: null,
       sortTime: new Date(entry.timestamp).getTime(),
     });
   }
@@ -1502,6 +1623,10 @@ function getDoctorCriticalAlert(
       )}.`,
       targetId: `doctor-report-${report.id}`,
       timestamp: report.timestamp,
+      status: "open",
+      acknowledgedByName: null,
+      acknowledgedAt: null,
+      ownershipNote: null,
       sortTime: new Date(report.timestamp).getTime(),
     });
   }
@@ -1521,24 +1646,11 @@ function getDoctorCriticalAlert(
       )}.`,
       targetId: `doctor-screening-${screening.id}`,
       timestamp: screening.timestamp,
+      status: "open",
+      acknowledgedByName: null,
+      acknowledgedAt: null,
+      ownershipNote: null,
       sortTime: new Date(screening.timestamp).getTime(),
-    });
-  }
-
-  for (const observation of observations) {
-    if (observation.priority !== "Critical") {
-      continue;
-    }
-
-    candidates.push({
-      summary: observation.observation,
-      detail: `A critical ${observation.observationType.toLowerCase()} note was recorded on ${format(
-        new Date(observation.timestamp),
-        "MMM d, yyyy 'at' h:mm a",
-      )}.`,
-      targetId: `doctor-observation-${observation.id}`,
-      timestamp: observation.timestamp,
-      sortTime: new Date(observation.timestamp).getTime(),
     });
   }
 

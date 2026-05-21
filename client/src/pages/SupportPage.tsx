@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import {
   dailyReportTypeLabels,
+  type DemoModeStatus,
   emotionOptions,
   formatDisplayName,
   getCheckInRichness,
@@ -30,6 +31,7 @@ import {
   type ObservationPriority,
   type ObservationType,
   type PatientSummary,
+  type PilotMetrics,
   type WeeklyScreeningRecord,
 } from "@shared/contracts";
 import {
@@ -158,6 +160,11 @@ type CriticalAlertTarget = {
   tab: SupportWorkspace;
   targetId: string;
   timestamp: string;
+  observationId: number | null;
+  status: "open" | "acknowledged";
+  acknowledgedByName: string | null;
+  acknowledgedAt: string | null;
+  ownershipNote: string | null;
 };
 
 type SupportPageProps = {
@@ -191,25 +198,40 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
   });
   const [showCriticalAlert, setShowCriticalAlert] = useState(false);
   const [pendingScrollTargetId, setPendingScrollTargetId] = useState<string | null>(null);
+  const [pilotMetrics, setPilotMetrics] = useState<PilotMetrics | null>(null);
+  const [demoMode, setDemoMode] = useState<DemoModeStatus | null>(null);
+  const [isAcknowledgingAlert, setIsAcknowledgingAlert] = useState(false);
+  const [isResettingDemoScenario, setIsResettingDemoScenario] = useState(false);
   const { toast } = useToast();
 
   const loadDashboard = async () => {
     setIsLoadingLogs(true);
 
     try {
-      const [nextPatients, nextLogs, nextDailyReports, nextScreenings, nextObservations] =
-        await Promise.all([
+      const [
+        nextPatients,
+        nextLogs,
+        nextDailyReports,
+        nextScreenings,
+        nextObservations,
+        nextPilotMetrics,
+        nextDemoMode,
+      ] = await Promise.all([
         apiRequest<PatientSummary[]>("/api/patients"),
         apiRequest<EmotionLog[]>("/api/logs"),
         apiRequest<DailyReportRecord[]>("/api/daily-reports"),
         apiRequest<WeeklyScreeningRecord[]>("/api/weekly-screenings"),
-          apiRequest<ObservationRecord[]>("/api/observations"),
-        ]);
+        apiRequest<ObservationRecord[]>("/api/observations"),
+        apiRequest<PilotMetrics>("/api/pilot-metrics"),
+        apiRequest<DemoModeStatus>("/api/demo-mode"),
+      ]);
       setPatients(nextPatients);
       setLogs(nextLogs);
       setDailyReports(nextDailyReports);
       setScreenings(nextScreenings);
       setObservations(nextObservations);
+      setPilotMetrics(nextPilotMetrics);
+      setDemoMode(nextDemoMode);
     } catch (error) {
       toast({
         title: "Could not load the patient dashboard",
@@ -403,6 +425,7 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
     selectedPatientAllLogs,
     selectedPatientAllDailyReports,
     selectedPatientAllScreenings,
+    selectedPatientAllObservations,
   );
   const selectedPatientFlags = Array.from(
     new Set(selectedPatientLogs.flatMap((log) => getEmotionFlags(log))),
@@ -507,6 +530,73 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
     setPendingScrollTargetId(criticalAlert.targetId);
   };
 
+  const handleAcknowledgeCriticalAlert = async () => {
+    if (!criticalAlert?.observationId) {
+      handleOpenCriticalAlert();
+      return;
+    }
+
+    setIsAcknowledgingAlert(true);
+
+    try {
+      await apiRequest(`/api/observations/${criticalAlert.observationId}/acknowledge`, {
+        method: "PATCH",
+        data: {
+          ownershipNote: "Support worker acknowledged ownership from the desktop alert flow.",
+        },
+      });
+
+      toast({
+        title: "Critical alert acknowledged",
+        description: "Ownership has been assigned to you and the app will jump to the triggering item.",
+        variant: "success",
+      });
+
+      await loadDashboard();
+      handleOpenCriticalAlert();
+    } catch (error) {
+      toast({
+        title: "Could not acknowledge the alert",
+        description: getErrorMessage(error),
+        variant: "error",
+      });
+    } finally {
+      setIsAcknowledgingAlert(false);
+    }
+  };
+
+  const handleResetDemoScenario = async (scenarioId: DemoModeStatus["activeScenarioId"]) => {
+    if (!scenarioId) {
+      return;
+    }
+
+    setIsResettingDemoScenario(true);
+
+    try {
+      const nextDemoMode = await apiRequest<DemoModeStatus>(
+        `/api/demo-mode/reset/${scenarioId}`,
+        {
+          method: "POST",
+        },
+      );
+      setDemoMode(nextDemoMode);
+      toast({
+        title: "Synthetic demo scenario loaded",
+        description: "The support queue now contains resettable fake patient data only.",
+        variant: "success",
+      });
+      await loadDashboard();
+    } catch (error) {
+      toast({
+        title: "Could not load the synthetic demo scenario",
+        description: getErrorMessage(error),
+        variant: "error",
+      });
+    } finally {
+      setIsResettingDemoScenario(false);
+    }
+  };
+
   const handleOpenAccessManagement = () => {
     navigate("/support/access");
   };
@@ -548,6 +638,15 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
   };
 
   const handleExport = () => {
+    if (demoMode?.activeScenarioId) {
+      toast({
+        title: "Export disabled in synthetic demo mode",
+        description: "Resettable demo sessions should stay clearly separate from exportable pilot data.",
+        variant: "info",
+      });
+      return;
+    }
+
     if (logs.length === 0 && dailyReports.length === 0 && screenings.length === 0) {
       toast({
         title: "Nothing to export",
@@ -691,6 +790,8 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
             patientId={selectedPatientId}
             alert={criticalAlert}
             onOpen={handleOpenCriticalAlert}
+            onAcknowledge={handleAcknowledgeCriticalAlert}
+            isAcknowledging={isAcknowledgingAlert}
             onDismiss={() => setShowCriticalAlert(false)}
           />
         ) : null}
@@ -714,7 +815,7 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
                 </button>
                 <button type="button" className="btn btn-secondary" onClick={handleExport}>
                   <ClipboardList className="h-4 w-4" />
-                  Export JSON
+                  {demoMode?.activeScenarioId ? "Export Disabled In Demo" : "Export JSON"}
                 </button>
               </div>
             </div>
@@ -749,6 +850,128 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
                 tone="mint"
               />
             </div>
+          </div>
+        </section>
+
+        <section className="mt-6 grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+          <div className="surface-panel">
+            <SectionHeader
+              eyebrow="Pilot Snapshot"
+              title="Readiness and data quality"
+              copy="These pilot-safe metrics stay PHI-light and help the team decide whether the workflow is stable enough for supervised testing."
+            />
+
+            {pilotMetrics ? (
+              <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                <MetricTile
+                  label="Consent comprehension"
+                  value={`${pilotMetrics.consentComprehensionRate.percent}%`}
+                  detail={`${pilotMetrics.consentComprehensionRate.numerator} of ${pilotMetrics.consentComprehensionRate.denominator} patient accounts acknowledged the staffed-hours and emergency limits.`}
+                  tone="sky"
+                />
+                <MetricTile
+                  label="Clinically usable entries"
+                  value={`${pilotMetrics.clinicallyUsableEntryRate.percent}%`}
+                  detail="Tracks whether saved entries contain enough structured detail to be useful for review."
+                  tone="mint"
+                />
+                <MetricTile
+                  label="Missed-med detail capture"
+                  value={`${pilotMetrics.missedMedicationDetailCaptureRate.percent}%`}
+                  detail="Measures whether medication misses include which medication and why."
+                  tone="gold"
+                />
+                <MetricTile
+                  label="Reliability flags"
+                  value={`${pilotMetrics.reliabilityFlagRate.percent}%`}
+                  detail="Counts entries downgraded to Medium or Low reliability."
+                  tone="coral"
+                />
+                <MetricTile
+                  label="Critical alert acknowledgement"
+                  value={`${pilotMetrics.criticalAlertAcknowledgementRate.percent}%`}
+                  detail={
+                    pilotMetrics.averageCriticalAlertAcknowledgementMinutes != null
+                      ? `Average acknowledgement time ${pilotMetrics.averageCriticalAlertAcknowledgementMinutes} minutes.`
+                      : "No critical alerts acknowledged yet."
+                  }
+                  tone="sky"
+                />
+                <MetricTile
+                  label="Consistency"
+                  value={`${pilotMetrics.consistencyRate.percent}%`}
+                  detail="Tracks which patients have usable data across at least three separate days."
+                  tone="mint"
+                />
+              </div>
+            ) : (
+              <EmptyPanel message="Pilot metrics are loading..." />
+            )}
+          </div>
+
+          <div className="content-stack">
+            <section className="surface-panel">
+              <SectionHeader
+                eyebrow="Safety Boundary"
+                title="Staffed-hours monitoring only"
+                copy="Support workers should use this queue for triage and follow-up, but the product must never imply 24/7 emergency monitoring."
+              />
+
+              <div className="mt-5 space-y-3">
+                <div className="rounded-[22px] border border-amber-200 bg-amber-50 px-4 py-4 text-sm leading-6 text-amber-900">
+                  Critical alerts should receive one named owner, one acknowledgement timestamp, and a clear escalation path if no owner claims the alert quickly.
+                </div>
+                <div className="rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-4 text-sm leading-6 text-slate-700">
+                  Patient-facing language should confirm receipt without promising that staff are always watching.
+                </div>
+              </div>
+            </section>
+
+            <section className="surface-panel">
+              <SectionHeader
+                eyebrow="Synthetic Demo"
+                title="Reset fake investor-safe scenarios"
+                copy="These scenario packs use synthetic patients only and help you demo risk change, crisis alerts, mismatch, and revision history without touching live pilot data."
+              />
+
+              {demoMode ? (
+                <div className="mt-5 space-y-3">
+                  <div className="rounded-[22px] border border-sky-200 bg-sky-50 px-4 py-4 text-sm leading-6 text-sky-900">
+                    {demoMode.activeScenarioId
+                      ? `Active synthetic scenario: ${demoMode.scenarios.find((scenario) => scenario.id === demoMode.activeScenarioId)?.name ?? demoMode.activeScenarioId}.`
+                      : "No synthetic scenario is active right now."}
+                  </div>
+
+                  {demoMode.scenarios.map((scenario) => (
+                    <button
+                      key={scenario.id}
+                      type="button"
+                      className="selection-card w-full"
+                      onClick={() => handleResetDemoScenario(scenario.id)}
+                      disabled={isResettingDemoScenario}
+                    >
+                      <div className="w-full text-left">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <p className="text-base font-semibold text-slate-900">{scenario.name}</p>
+                          <span className="badge bg-slate-100 text-slate-700">
+                            {scenario.patientCount} fake patient
+                            {scenario.patientCount === 1 ? "" : "s"}
+                          </span>
+                        </div>
+                        <p className="mt-2 text-sm leading-6 text-slate-600">
+                          {scenario.description}
+                        </p>
+                        <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          {scenario.focus}
+                        </p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <EmptyPanel message="Synthetic demo controls are loading..." />
+              )}
+            </section>
           </div>
         </section>
 
@@ -984,6 +1207,8 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
                       patientId={selectedPatientId}
                       alert={criticalAlert}
                       onOpen={handleOpenCriticalAlert}
+                      onAcknowledge={handleAcknowledgeCriticalAlert}
+                      isAcknowledging={isAcknowledgingAlert}
                     />
                   ) : null}
 
@@ -1717,8 +1942,58 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
                     </button>
                     <button type="button" className="btn btn-secondary w-full" onClick={handleExport}>
                       <ClipboardList className="h-4 w-4" />
-                      Export filtered JSON
+                      {demoMode?.activeScenarioId
+                        ? "Export Disabled In Demo"
+                        : "Export filtered JSON"}
                     </button>
+                  </div>
+                </section>
+
+                <section className="surface-panel">
+                  <SectionHeader
+                    eyebrow="Recent Alerts And Notes"
+                    title="Current observation ownership"
+                    copy="Critical alerts should show one owner and one acknowledgement time before follow-up continues."
+                  />
+
+                  <div className="mt-6 space-y-4">
+                    {selectedPatientObservations.length > 0 ? (
+                      selectedPatientObservations.slice(0, 5).map((observation) => (
+                        <div
+                          key={observation.id}
+                          id={`support-observation-${observation.id}`}
+                          className="timeline-card"
+                        >
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className={`badge ${priorityMeta[observation.priority]}`}>
+                              {observation.priority}
+                            </span>
+                            <span className="badge bg-slate-100 text-slate-700">
+                              {observation.observationType}
+                            </span>
+                            <span
+                              className={`badge ${
+                                observation.status === "acknowledged"
+                                  ? "bg-emerald-100 text-emerald-800"
+                                  : "bg-amber-100 text-amber-900"
+                              }`}
+                            >
+                              {observation.status === "acknowledged" ? "Owned" : "Open"}
+                            </span>
+                          </div>
+                          <p className="mt-3 text-sm leading-6 text-slate-700">
+                            {observation.observation}
+                          </p>
+                          <p className="mt-3 text-xs leading-5 text-slate-500">
+                            {observation.status === "acknowledged"
+                              ? `Owned by ${observation.acknowledgedByName ?? "support worker"}${observation.acknowledgedAt ? ` on ${format(new Date(observation.acknowledgedAt), "MMM d, yyyy 'at' h:mm a")}` : ""}.`
+                              : "No owner recorded yet."}
+                          </p>
+                        </div>
+                      ))
+                    ) : (
+                      <EmptyPanel message="Support observations and alert ownership will appear here once notes are saved." />
+                    )}
                   </div>
                 </section>
 
@@ -1823,11 +2098,15 @@ function CriticalAlertOverlay({
   patientId,
   alert,
   onOpen,
+  onAcknowledge,
+  isAcknowledging,
   onDismiss,
 }: {
   patientId: string;
   alert: CriticalAlertTarget;
   onOpen: () => void;
+  onAcknowledge: () => void;
+  isAcknowledging: boolean;
   onDismiss: () => void;
 }) {
   return (
@@ -1839,6 +2118,12 @@ function CriticalAlertOverlay({
         </h2>
         <p className="mt-4 text-base leading-7 text-slate-700">{alert.summary}</p>
         <p className="mt-3 text-sm leading-6 text-slate-600">{alert.detail}</p>
+        <div className="mt-4 rounded-[22px] border border-rose-200 bg-rose-50 px-4 py-4 text-sm leading-6 text-rose-900">
+          {alert.status === "acknowledged"
+            ? `Owned by ${alert.acknowledgedByName ?? "a support worker"}${alert.acknowledgedAt ? ` since ${format(new Date(alert.acknowledgedAt), "MMM d, yyyy 'at' h:mm a")}` : ""}.`
+            : "No support worker has acknowledged ownership yet."}
+          {alert.ownershipNote ? ` ${alert.ownershipNote}` : ""}
+        </div>
         <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-rose-700">
           Click below to jump straight to the triggering entry.
         </p>
@@ -1846,6 +2131,18 @@ function CriticalAlertOverlay({
         <div className="mt-6 flex flex-col gap-3 sm:flex-row">
           <button type="button" className="btn btn-primary flex-1" onClick={onOpen}>
             Open Critical Alert
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary flex-1"
+            onClick={onAcknowledge}
+            disabled={isAcknowledging || alert.status === "acknowledged"}
+          >
+            {alert.status === "acknowledged"
+              ? "Already Acknowledged"
+              : isAcknowledging
+                ? "Acknowledging..."
+                : "Acknowledge And Open"}
           </button>
           <button type="button" className="btn btn-secondary flex-1" onClick={onDismiss}>
             Dismiss For Now
@@ -1860,18 +2157,20 @@ function CriticalAlertCallout({
   patientId,
   alert,
   onOpen,
+  onAcknowledge,
+  isAcknowledging,
   className = "",
 }: {
   patientId: string;
   alert: CriticalAlertTarget;
   onOpen: () => void;
+  onAcknowledge: () => void;
+  isAcknowledging: boolean;
   className?: string;
 }) {
   return (
-    <button
-      type="button"
-      className={`w-full rounded-[28px] border border-rose-200 bg-rose-50 px-5 py-5 text-left shadow-sm transition hover:border-rose-300 hover:bg-rose-100 ${className}`}
-      onClick={onOpen}
+    <div
+      className={`w-full rounded-[28px] border border-rose-200 bg-rose-50 px-5 py-5 text-left shadow-sm ${className}`}
     >
       <p className="text-xs font-semibold uppercase tracking-[0.3em] text-rose-700">
         Critical Alert
@@ -1881,8 +2180,29 @@ function CriticalAlertCallout({
       </h3>
       <p className="mt-3 text-sm leading-6 text-rose-900">{alert.summary}</p>
       <p className="mt-2 text-sm leading-6 text-rose-800">{alert.detail}</p>
-      <p className="mt-4 text-sm font-semibold text-rose-900">Click to open the triggering entry.</p>
-    </button>
+      <p className="mt-3 text-sm leading-6 text-rose-800">
+        {alert.status === "acknowledged"
+          ? `Owned by ${alert.acknowledgedByName ?? "a support worker"}.`
+          : "No support worker has acknowledged ownership yet."}
+      </p>
+      <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+        <button type="button" className="btn btn-primary flex-1" onClick={onOpen}>
+          Open Triggering Entry
+        </button>
+        <button
+          type="button"
+          className="btn btn-secondary flex-1"
+          onClick={onAcknowledge}
+          disabled={isAcknowledging || alert.status === "acknowledged"}
+        >
+          {alert.status === "acknowledged"
+            ? "Already Acknowledged"
+            : isAcknowledging
+              ? "Acknowledging..."
+              : "Acknowledge Alert"}
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -1890,8 +2210,53 @@ function getSupportCriticalAlert(
   logs: EmotionLog[],
   dailyReports: DailyReportRecord[],
   screenings: WeeklyScreeningRecord[],
+  observations: ObservationRecord[],
 ): CriticalAlertTarget | null {
   const candidates: Array<CriticalAlertTarget & { sortTime: number }> = [];
+
+  for (const observation of observations) {
+    if (observation.priority !== "Critical" && observation.observationType !== "Alert") {
+      continue;
+    }
+
+    let tab: SupportWorkspace = "notes";
+    let targetId = `support-observation-${observation.id}`;
+
+    if (observation.linkedEntityType === "emotion" && observation.linkedEntityId != null) {
+      tab = "timeline";
+      targetId = `support-log-${observation.linkedEntityId}`;
+    } else if (
+      observation.linkedEntityType === "daily_report" &&
+      observation.linkedEntityId != null
+    ) {
+      tab = "sleep";
+      targetId = `support-report-${observation.linkedEntityId}`;
+    } else if (
+      observation.linkedEntityType === "weekly_screening" &&
+      observation.linkedEntityId != null
+    ) {
+      tab = "screening";
+      targetId = `support-screening-${observation.linkedEntityId}`;
+    }
+
+    candidates.push({
+      title: "Critical Alert",
+      summary: observation.observation,
+      detail: `Alert recorded on ${format(
+        new Date(observation.timestamp),
+        "MMM d, yyyy 'at' h:mm a",
+      )}.`,
+      tab,
+      targetId,
+      timestamp: observation.timestamp,
+      observationId: observation.id,
+      status: observation.status,
+      acknowledgedByName: observation.acknowledgedByName,
+      acknowledgedAt: observation.acknowledgedAt,
+      ownershipNote: observation.ownershipNote,
+      sortTime: new Date(observation.timestamp).getTime(),
+    });
+  }
 
   for (const log of logs) {
     if (log.crisisLevel !== "critical") {
@@ -1908,6 +2273,11 @@ function getSupportCriticalAlert(
       tab: "timeline",
       targetId: `support-log-${log.id}`,
       timestamp: log.timestamp,
+      observationId: null,
+      status: "open",
+      acknowledgedByName: null,
+      acknowledgedAt: null,
+      ownershipNote: null,
       sortTime: new Date(log.timestamp).getTime(),
     });
   }
@@ -1927,6 +2297,11 @@ function getSupportCriticalAlert(
       tab: report.reportType === "night" ? "sleep" : "sleep",
       targetId: `support-report-${report.id}`,
       timestamp: report.timestamp,
+      observationId: null,
+      status: "open",
+      acknowledgedByName: null,
+      acknowledgedAt: null,
+      ownershipNote: null,
       sortTime: new Date(report.timestamp).getTime(),
     });
   }
@@ -1948,6 +2323,11 @@ function getSupportCriticalAlert(
       tab: "screening",
       targetId: `support-screening-${screening.id}`,
       timestamp: screening.timestamp,
+      observationId: null,
+      status: "open",
+      acknowledgedByName: null,
+      acknowledgedAt: null,
+      ownershipNote: null,
       sortTime: new Date(screening.timestamp).getTime(),
     });
   }
@@ -2193,10 +2573,24 @@ function EmotionLogCard({
                   <span className="badge bg-slate-100 text-slate-700">
                     {observation.observationType}
                   </span>
+                  <span
+                    className={`badge ${
+                      observation.status === "acknowledged"
+                        ? "bg-emerald-100 text-emerald-800"
+                        : "bg-amber-100 text-amber-900"
+                    }`}
+                  >
+                    {observation.status === "acknowledged" ? "Owned" : "Open"}
+                  </span>
                 </div>
                 <p className="mt-2 text-sm text-slate-700">{observation.observation}</p>
                 <p className="mt-2 text-xs text-slate-500">
                   {format(new Date(observation.timestamp), "MMM d, yyyy 'at' h:mm a")}
+                </p>
+                <p className="mt-1 text-xs text-slate-500">
+                  {observation.status === "acknowledged"
+                    ? `Owned by ${observation.acknowledgedByName ?? "support worker"}.`
+                    : "No owner recorded yet."}
                 </p>
               </div>
             ))}

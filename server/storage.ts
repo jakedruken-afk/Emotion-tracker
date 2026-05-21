@@ -1,5 +1,6 @@
 import { db } from "./db";
 import {
+  type AcknowledgeObservation,
   type AppetiteChangeDirection,
   type CarePlanRecord,
   type CrisisLevel,
@@ -20,7 +21,9 @@ import {
   type MissedMedicationReason,
   type ObservationPriority,
   type ObservationRecord,
+  type ObservationStatus,
   type ObservationType,
+  type ObservationLinkedEntityType,
   type ReliabilityLevel,
   type SleepQuality,
   type UpdateCarePlan,
@@ -58,6 +61,10 @@ export type UpdateEmotionRow = UpdateEmotion;
 
 export type Observation = ObservationRecord;
 export type InsertObservationRow = InsertObservation;
+export type AcknowledgeObservationRow = AcknowledgeObservation & {
+  acknowledgedByUserId: number;
+  acknowledgedByName: string;
+};
 
 export type DailyReport = DailyReportRecord;
 export type InsertDailyReportRow = InsertDailyReport;
@@ -110,6 +117,8 @@ export interface IStorage {
   getEmotionsByPatientId(patientId: string): Promise<Emotion[]>;
   getAllEmotions(): Promise<Emotion[]>;
   createObservation(observation: InsertObservationRow): Promise<Observation>;
+  getObservationById(id: number): Promise<Observation | undefined>;
+  acknowledgeObservation(id: number, input: AcknowledgeObservationRow): Promise<Observation>;
   getObservationsByPatientId(patientId: string): Promise<Observation[]>;
   getAllObservations(): Promise<Observation[]>;
   createDailyReport(
@@ -217,6 +226,19 @@ function mapObservation(row: Record<string, unknown> | undefined): Observation |
     observation: String(row.observation),
     priority: row.priority as ObservationPriority,
     supportWorkerName: String(row.supportWorkerName),
+    linkedEntityType:
+      row.linkedEntityType == null
+        ? null
+        : (String(row.linkedEntityType) as ObservationLinkedEntityType),
+    linkedEntityId: row.linkedEntityId == null ? null : Number(row.linkedEntityId),
+    systemGenerated: Boolean(row.systemGenerated),
+    status: (row.status ?? "open") as ObservationStatus,
+    ownershipNote: row.ownershipNote == null ? null : String(row.ownershipNote),
+    acknowledgedByUserId:
+      row.acknowledgedByUserId == null ? null : Number(row.acknowledgedByUserId),
+    acknowledgedByName:
+      row.acknowledgedByName == null ? null : String(row.acknowledgedByName),
+    acknowledgedAt: row.acknowledgedAt == null ? null : String(row.acknowledgedAt),
     timestamp: String(row.timestamp),
   };
 }
@@ -688,9 +710,17 @@ export class DatabaseStorage implements IStorage {
           observation_type,
           observation,
           priority,
-          support_worker_name
+          support_worker_name,
+          status,
+          ownership_note,
+          acknowledged_by_user_id,
+          acknowledged_by_name,
+          acknowledged_at,
+          linked_entity_type,
+          linked_entity_id,
+          system_generated
         )
-        VALUES (?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, 'open', NULL, NULL, NULL, NULL, ?, ?, ?)
       `)
       .run(
         observation.patientId,
@@ -698,6 +728,9 @@ export class DatabaseStorage implements IStorage {
         observation.observation,
         observation.priority,
         observation.supportWorkerName,
+        observation.linkedEntityType ?? null,
+        observation.linkedEntityId ?? null,
+        observation.systemGenerated ? 1 : 0,
       );
 
     const row = db
@@ -709,6 +742,14 @@ export class DatabaseStorage implements IStorage {
           observation,
           priority,
           support_worker_name AS supportWorkerName,
+          status,
+          ownership_note AS ownershipNote,
+          acknowledged_by_user_id AS acknowledgedByUserId,
+          acknowledged_by_name AS acknowledgedByName,
+          acknowledged_at AS acknowledgedAt,
+          linked_entity_type AS linkedEntityType,
+          linked_entity_id AS linkedEntityId,
+          system_generated AS systemGenerated,
           timestamp
         FROM observations
         WHERE id = ?
@@ -722,6 +763,64 @@ export class DatabaseStorage implements IStorage {
     }
 
     return createdObservation;
+  }
+
+  async getObservationById(id: number) {
+    const row = db
+      .prepare(`
+        SELECT
+          id,
+          patient_id AS patientId,
+          observation_type AS observationType,
+          observation,
+          priority,
+          support_worker_name AS supportWorkerName,
+          status,
+          ownership_note AS ownershipNote,
+          acknowledged_by_user_id AS acknowledgedByUserId,
+          acknowledged_by_name AS acknowledgedByName,
+          acknowledged_at AS acknowledgedAt,
+          linked_entity_type AS linkedEntityType,
+          linked_entity_id AS linkedEntityId,
+          system_generated AS systemGenerated,
+          timestamp
+        FROM observations
+        WHERE id = ?
+      `)
+      .get(id) as Record<string, unknown> | undefined;
+
+    return mapObservation(row);
+  }
+
+  async acknowledgeObservation(id: number, input: AcknowledgeObservationRow) {
+    const updateResult = db
+      .prepare(`
+        UPDATE observations
+        SET
+          status = 'acknowledged',
+          ownership_note = ?,
+          acknowledged_by_user_id = ?,
+          acknowledged_by_name = ?,
+          acknowledged_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `)
+      .run(
+        input.ownershipNote ?? null,
+        input.acknowledgedByUserId,
+        input.acknowledgedByName,
+        id,
+      );
+
+    if (updateResult.changes === 0) {
+      throw new Error("Observation not found");
+    }
+
+    const updatedObservation = await this.getObservationById(id);
+    if (!updatedObservation) {
+      throw new Error("Failed to acknowledge observation");
+    }
+
+    return updatedObservation;
   }
 
   async createDailyReport(report: InsertDailyReportRow, meta: PatientEntryPersistenceMeta) {
@@ -833,6 +932,14 @@ export class DatabaseStorage implements IStorage {
           observation,
           priority,
           support_worker_name AS supportWorkerName,
+          status,
+          ownership_note AS ownershipNote,
+          acknowledged_by_user_id AS acknowledgedByUserId,
+          acknowledged_by_name AS acknowledgedByName,
+          acknowledged_at AS acknowledgedAt,
+          linked_entity_type AS linkedEntityType,
+          linked_entity_id AS linkedEntityId,
+          system_generated AS systemGenerated,
           timestamp
         FROM observations
         WHERE patient_id = ?
@@ -855,6 +962,14 @@ export class DatabaseStorage implements IStorage {
           observation,
           priority,
           support_worker_name AS supportWorkerName,
+          status,
+          ownership_note AS ownershipNote,
+          acknowledged_by_user_id AS acknowledgedByUserId,
+          acknowledged_by_name AS acknowledgedByName,
+          acknowledged_at AS acknowledgedAt,
+          linked_entity_type AS linkedEntityType,
+          linked_entity_id AS linkedEntityId,
+          system_generated AS systemGenerated,
           timestamp
         FROM observations
         ORDER BY timestamp DESC, id DESC
