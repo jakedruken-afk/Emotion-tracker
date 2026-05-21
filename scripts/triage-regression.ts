@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { evaluatePatientTextForCrisis } from "../server/clinicalMonitoring";
 import { buildPatientRiskSnapshot } from "../client/src/lib/riskReview";
+import type { EmotionLog } from "../shared/contracts";
 
 const now = new Date().toISOString();
 
-function createEmotionLog(overrides: Record<string, unknown> = {}) {
+function createEmotionLog(overrides: Partial<EmotionLog> = {}): EmotionLog {
   return {
     id: 1,
     patientId: "demo-patient",
