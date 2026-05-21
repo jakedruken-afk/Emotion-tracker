@@ -35,7 +35,10 @@ engine and it is not a lie detector.
 - Support-worker dashboard with priority queue, trend review, and local care pathways
 - Separate doctor review page with printable visit summary, visit questions, medications, and care plan
 - Invite-only onboarding for private pilots
-- Server-backed sessions with `httpOnly` cookies
+- Server-backed sessions with cookie or header transport for hybrid patient shells
+- Patient-side offline drafts, queued retry, and visible sync status
+- Synthetic demo mode with resettable fake patient scenarios
+- Pilot snapshot metrics for consent, data quality, and alert acknowledgement
 - Consent records, assignment-based access, and audit logging
 - Backup, restore, release bundle, and GitHub-driven deploy support
 
@@ -97,13 +100,17 @@ npm run dev
 
 Demo accounts are for local development only. In production mode, L.A.M.B expects clinician-managed onboarding and demo seeding should be turned off.
 
+Synthetic demo scenarios can be reset from the support dashboard when `ENABLE_DEMO_SEED=true`.
+
 ## Secure Pilot Features
 
 - Server-backed sign-in with `httpOnly` cookies
+- Header-session support for hybrid patient shells
 - Password hashing
 - Assignment-based patient access
 - Invite-only onboarding
 - Patient consent records for mood, sleep, weekly screening, and GPS
+- Staffed-hours and emergency-limit acknowledgement in consent
 - GPS off by default until explicit consent is given
 - Audit logging for sign-in, views, writes, invites, assignments, medications, care plans, and consent changes
 
@@ -119,10 +126,12 @@ NODE_ENV=production
 LAMB_PRODUCTION_MODE=true
 SESSION_SECRET=replace-with-a-long-random-secret
 APP_BASE_URL=https://your-domain.example
+VITE_API_BASE_URL=https://your-domain.example
 DATABASE_PATH=/srv/lamb-pilot/shared/data/emotion-tracker.db
 BACKUP_DIR=/srv/lamb-pilot/shared/backups
 ENABLE_DEMO_SEED=false
 TRUST_PROXY=true
+MOBILE_ALLOWED_ORIGINS=capacitor://localhost,ionic://localhost
 ```
 
 Before the first live sign-in, create the first support account:
@@ -196,6 +205,99 @@ Stop the running app before a restore so the SQLite files are not being written 
 ## Live Deployment
 
 Production deployment guidance lives in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
+## Cloudflare Worker D1 Backend
+
+This repo also includes a standalone Hono + Cloudflare D1 backend at [`src/server.ts`](src/server.ts). It is separate from the existing Express pilot server and is configured by [`wrangler.toml`](wrangler.toml).
+
+Install the Worker dependencies:
+
+```powershell
+npm install hono
+npm install -D wrangler
+```
+
+Create the D1 database in the region required by your PHIPA/PIPEDA data-residency plan. The schema notes use Eastern North America as the Canadian-proximate option:
+
+```powershell
+npx wrangler d1 create lamb_db --location=enam
+```
+
+Copy the returned `database_id` into `wrangler.toml`, then migrate the schema:
+
+```powershell
+npx wrangler d1 execute DB --file=db_schema.sql
+```
+
+If Wrangler expects the database name instead of the binding in your local version, use:
+
+```powershell
+npx wrangler d1 execute lamb_db --file=db_schema.sql
+```
+
+Set production secrets before deploy. Do not leave real secrets in `wrangler.toml`:
+
+```powershell
+npx wrangler secret put JWT_SECRET
+npx wrangler secret put BCRYPT_SALT
+```
+
+Run locally:
+
+```powershell
+npx wrangler dev
+```
+
+Deploy:
+
+```powershell
+npx wrangler deploy
+```
+
+Optional type check for the Worker entrypoint:
+
+```powershell
+npx tsc -p tsconfig.worker.json
+```
+
+Compliance reminders for clinical use:
+
+- Get informed consent before collecting personal health information.
+- Keep data encrypted at rest and in transit; D1 provides encryption at rest, and Workers traffic uses TLS.
+- Store data in the Canadian/approved residency region for the pilot and verify the current Cloudflare regional guarantees for your account.
+- Preserve audit trails through `access_log` and `log_edits`; do not disable them in production.
+- Treat this as technical implementation guidance, not legal advice.
+
+## Mobile Pilot
+
+Patient-first mobile and pilot-safety guidance lives in [docs/MOBILE_PILOT.md](docs/MOBILE_PILOT.md).
+
+Useful Android commands:
+
+```powershell
+npm run mobile:sync:android
+npm run mobile:open:android
+npm run mobile:run:android
+```
+
+### Desktop Batch Files
+
+Two desktop helper files were added for quick access on Windows:
+
+- `Open LAMB Project.cmd`
+  - Opens the project folder in File Explorer
+  - Opens the Android Studio project if Android Studio is installed
+- `Start LAMB Android Dev.cmd`
+  - Starts the API server with `npm run dev:server`
+  - Opens the Android Studio project
+  - Opens the project folder in File Explorer
+
+Recommended use:
+
+- Use `Open LAMB Project.cmd` when you only want to look at files or reopen the Android project
+- Use `Start LAMB Android Dev.cmd` when you want to resume Android testing and need the local API running
+
+If Android login ever shows `Failed to fetch`, make sure the API server window opened by `Start LAMB Android Dev.cmd` is still running and that the app is listening on `http://localhost:3001`.
 
 Included support files:
 

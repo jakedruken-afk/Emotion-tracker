@@ -52,12 +52,17 @@ NODE_ENV=production
 LAMB_PRODUCTION_MODE=true
 PORT=3001
 APP_BASE_URL=https://your-domain.example
+VITE_API_BASE_URL=https://your-domain.example
 SESSION_SECRET=replace-with-a-long-random-secret
 DATABASE_PATH=/srv/lamb-pilot/shared/data/emotion-tracker.db
 BACKUP_DIR=/srv/lamb-pilot/shared/backups
 ENABLE_DEMO_SEED=false
 TRUST_PROXY=true
+MOBILE_ALLOWED_ORIGINS=capacitor://localhost,ionic://localhost
 ```
+
+`MOBILE_ALLOWED_ORIGINS` is used for the patient-first hybrid shell so Capacitor-based builds can
+reach the API with header-based sessions.
 
 ## GitHub Secrets For Deployments
 
@@ -110,6 +115,9 @@ Typical live flow:
 - Caddy reverse-proxies to `127.0.0.1:3001`
 - PM2 keeps the Node app running
 
+For hybrid patient builds, the HTTPS host used here should match `VITE_API_BASE_URL` so the native
+shell points at the same deployed API.
+
 ## Releases
 
 To create a GitHub release bundle:
@@ -151,3 +159,14 @@ npm run restore -- /srv/lamb-pilot/shared/backups/emotion-tracker-YYYYMMDD-HHMMS
 ```
 
 Stop or reload the app carefully during a restore so the SQLite files are not being written at the same time.
+
+## Pilot Safety Notes
+
+Before any supervised participant use:
+
+- keep `ENABLE_DEMO_SEED=false` on live systems
+- confirm staffed-hours alert ownership workflows with at least two staff members
+- verify `MOBILE_ALLOWED_ORIGINS` only includes trusted hybrid-shell origins
+- do not position the deployment as 24/7 emergency monitoring
+
+Additional patient-first mobile guidance lives in [`docs/MOBILE_PILOT.md`](./MOBILE_PILOT.md).

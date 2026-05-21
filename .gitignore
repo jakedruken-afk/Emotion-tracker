@@ -7,3 +7,4 @@ backups/
 .env
 .DS_Store
 tmp/
+.codex-tools/

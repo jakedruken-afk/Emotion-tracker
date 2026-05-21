@@ -20,5 +20,5 @@
       "@shared/*": ["shared/*"]
     }
   },
-  "include": ["client", "server", "shared", "tailwind.config.ts", "vite.config.ts"]
+  "include": ["client", "server", "shared", "scripts", "tailwind.config.ts", "vite.config.ts"]
 }
