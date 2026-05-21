@@ -37,8 +37,20 @@ import {
   type WeeklyScreeningRecord,
 } from "@shared/contracts";
 import { useToast } from "../hooks/useToast";
-import { apiRequest, getErrorMessage } from "../lib/api";
+import { apiRequest, getErrorMessage, isNetworkError } from "../lib/api";
 import { captureCurrentLocation } from "../lib/location";
+import {
+  clearPatientDraft,
+  enqueuePatientSyncItem,
+  loadPatientDraft,
+  loadPatientSubmissionReceipts,
+  loadPatientSyncQueue,
+  markPatientQueueRetry,
+  removePatientSyncQueueItem,
+  savePatientDraft,
+  upsertPatientSubmissionReceipt,
+  type PatientSubmissionReceipt,
+} from "../lib/patientSync";
 import PatientWeeklyScreenWorkspace, {
   type WeeklyScreeningFormState,
 } from "../components/patient/PatientWeeklyScreenWorkspace";
@@ -94,6 +106,14 @@ type ConsentFormState = {
   sleepReports: boolean;
   weeklyScreening: boolean;
   gpsTracking: boolean;
+  acknowledgeStaffedHours: boolean;
+  acknowledgeEmergencyLimits: boolean;
+};
+
+type PatientSafetyNotice = {
+  title: string;
+  detail: string;
+  tone: "neutral" | "warning";
 };
 
 function createEmptyMorningReport(): MorningReportFormState {
@@ -122,6 +142,8 @@ function createDefaultConsentForm(): ConsentFormState {
     sleepReports: true,
     weeklyScreening: true,
     gpsTracking: false,
+    acknowledgeStaffedHours: false,
+    acknowledgeEmergencyLimits: false,
   };
 }
 
@@ -193,6 +215,149 @@ function createWeeklyScreeningForm(
   };
 }
 
+function hasMoodDraftData(input: {
+  selectedEmotion: EmotionName | null;
+  notes: string;
+  missedMedicationName: string;
+  missedMedicationReason: MissedMedicationReason | "";
+  includeLocation: boolean;
+  editingEmotionId: number | null;
+  medicationAdherence: MedicationAdherence;
+  sleepHours: number;
+  stressLevel: number;
+  cravingLevel: number;
+  substanceUseToday: boolean;
+  moneyChangedToday: boolean;
+}) {
+  return (
+    input.editingEmotionId != null ||
+    input.selectedEmotion != null ||
+    input.notes.trim().length > 0 ||
+    input.missedMedicationName.trim().length > 0 ||
+    input.missedMedicationReason !== "" ||
+    input.includeLocation ||
+    input.medicationAdherence !== "not_prescribed" ||
+    input.sleepHours !== 8 ||
+    input.stressLevel !== 5 ||
+    input.cravingLevel !== 0 ||
+    input.substanceUseToday ||
+    input.moneyChangedToday
+  );
+}
+
+function hasMorningDraftData(report: MorningReportFormState, editingId: number | null) {
+  return (
+    editingId != null ||
+    report.bedTime.length > 0 ||
+    report.wakeTime.length > 0 ||
+    report.sleepQuality !== "" ||
+    report.wakeUps.length > 0 ||
+    report.feltRested !== "" ||
+    report.notes.trim().length > 0
+  );
+}
+
+function hasNightDraftData(report: NightReportFormState, editingId: number | null) {
+  return (
+    editingId != null ||
+    report.bedTime.length > 0 ||
+    report.mealsCount.length > 0 ||
+    report.mealsNote.trim().length > 0 ||
+    report.notes.trim().length > 0
+  );
+}
+
+function hasWeeklyDraftData(form: WeeklyScreeningFormState, editingId: number | null) {
+  return (
+    editingId != null ||
+    form.wishedDead ||
+    form.familyBetterOffDead ||
+    form.thoughtsKillingSelf ||
+    form.thoughtsKillingSelfFrequency !== "" ||
+    form.everTriedToKillSelf ||
+    form.attemptTiming !== "none" ||
+    form.currentThoughts !== "" ||
+    form.depressedHardToFunction ||
+    form.depressedFrequency !== "" ||
+    form.anxiousOnEdge ||
+    form.anxiousFrequency !== "" ||
+    form.hopeless ||
+    form.couldNotEnjoyThings ||
+    form.keepingToSelf ||
+    form.moreIrritable ||
+    form.substanceUseMoreThanUsual ||
+    form.substanceUseFrequency !== "" ||
+    form.sleepTrouble ||
+    form.sleepTroubleFrequency !== "" ||
+    form.appetiteChange ||
+    form.appetiteChangeDirection !== "" ||
+    form.supportPerson.trim().length > 0 ||
+    form.reasonsForLiving.trim().length > 0 ||
+    form.copingPlan.trim().length > 0 ||
+    form.needsHelpStayingSafe !== ""
+  );
+}
+
+function buildSafetyNotice(
+  crisisLevel: "none" | "high" | "critical",
+  queued: boolean,
+  summary?: string | null,
+): PatientSafetyNotice | null {
+  if (queued) {
+    return {
+      title:
+        crisisLevel === "none"
+          ? "Saved on this phone"
+          : "Saved on this phone, not yet sent to staff",
+      detail:
+        crisisLevel === "none"
+          ? "This entry is queued and will retry when your connection returns."
+          : `${summary ?? "Your entry includes safety-related language."} L.A.M.B is not 24/7 emergency monitoring. If you are in immediate danger, call emergency services or go to the nearest emergency department now.`,
+      tone: crisisLevel === "none" ? "neutral" : "warning",
+    };
+  }
+
+  if (crisisLevel === "none") {
+    return null;
+  }
+
+  return {
+    title: "Safety-related entry sent",
+    detail: `${summary ?? "Your entry was sent to the care team."} This pilot is only monitored during set staffed hours. If you feel unsafe right now, contact emergency services or go to the nearest emergency department.`,
+    tone: "warning",
+  };
+}
+
+function getClientCrisisLevelHint(...values: Array<string | null | undefined>) {
+  const normalizedText = values
+    .filter((value): value is string => value != null && value.trim().length > 0)
+    .join(" ")
+    .toLowerCase()
+    .replace(/[^\w\s]/g, " ");
+
+  if (normalizedText.length === 0) {
+    return "none" as const;
+  }
+
+  if (
+    /dont belong on this earth|do not belong on this earth|want to die|end my life|kill myself|cant keep myself safe|can t keep myself safe/.test(
+      normalizedText,
+    )
+  ) {
+    return "critical" as const;
+  }
+
+  if (
+    /dont want to be here|do not want to be here|harm myself|worthless|better off without me|not be here anymore/.test(
+      normalizedText,
+    )
+  ) {
+    return "high" as const;
+  }
+
+  return "none" as const;
+}
+
 export default function PatientPage({ user, onLogout }: PatientPageProps) {
   const patientId = user.username;
   const [activeTab, setActiveTab] = useState<PatientWorkspace>("mood");
@@ -236,6 +401,16 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
   const [isSavingNightReport, setIsSavingNightReport] = useState(false);
   const [isSavingWeeklyScreening, setIsSavingWeeklyScreening] = useState(false);
   const [isSavingConsent, setIsSavingConsent] = useState(false);
+  const [isOnline, setIsOnline] = useState(
+    typeof navigator === "undefined" ? true : navigator.onLine,
+  );
+  const [isSyncingQueue, setIsSyncingQueue] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
+  const [syncReceipts, setSyncReceipts] = useState<PatientSubmissionReceipt[]>([]);
+  const [patientSafetyNotice, setPatientSafetyNotice] = useState<PatientSafetyNotice | null>(
+    null,
+  );
   const { toast } = useToast();
 
   const loadPatientData = async () => {
@@ -267,15 +442,22 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
               sleepReports: nextConsent.sleepReports,
               weeklyScreening: nextConsent.weeklyScreening,
               gpsTracking: nextConsent.gpsTracking,
+              acknowledgeStaffedHours: nextConsent.acknowledgeStaffedHours,
+              acknowledgeEmergencyLimits: nextConsent.acknowledgeEmergencyLimits,
             }
           : createDefaultConsentForm(),
       );
     } catch (error) {
-      toast({
-        title: "Could not load your saved information",
-        description: getErrorMessage(error),
-        variant: "error",
-      });
+      if (isNetworkError(error)) {
+        setSyncError("You are offline. Saved drafts and queued items stay on this phone.");
+        refreshSyncState();
+      } else {
+        toast({
+          title: "Could not load your saved information",
+          description: getErrorMessage(error),
+          variant: "error",
+        });
+      }
     } finally {
       setIsLoadingEntries(false);
       setIsLoadingDailyReports(false);
@@ -284,9 +466,331 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
     }
   };
 
+  const refreshSyncState = () => {
+    setSyncReceipts(loadPatientSubmissionReceipts(patientId));
+  };
+
+  const processSyncQueue = async () => {
+    if (isSyncingQueue || !isOnline) {
+      return;
+    }
+
+    const queue = loadPatientSyncQueue(patientId);
+    if (queue.length === 0) {
+      refreshSyncState();
+      return;
+    }
+
+    setIsSyncingQueue(true);
+
+    try {
+      let syncedAnyItem = false;
+
+      for (const item of queue) {
+        try {
+          const response = await apiRequest<
+            | EmotionRecord
+            | DailyReportRecord
+            | WeeklyScreeningRecord
+          >(item.url, {
+            method: item.method,
+            data: item.data,
+          });
+
+          removePatientSyncQueueItem(patientId, item.id);
+          upsertPatientSubmissionReceipt(patientId, {
+            id: item.id,
+            label: item.label,
+            status: "synced",
+            detail:
+              response.crisisLevel === "none"
+                ? "Sent to the care team."
+                : "Sent to the care team with a safety follow-up warning.",
+          });
+          setLastSyncedAt(new Date().toISOString());
+          setPatientSafetyNotice(
+            buildSafetyNotice(response.crisisLevel, false, response.crisisSummary),
+          );
+          syncedAnyItem = true;
+        } catch (error) {
+          if (isNetworkError(error)) {
+            markPatientQueueRetry(patientId, item.id, item.retryCount + 1);
+            setSyncError("Connection lost while retrying saved entries.");
+            break;
+          }
+
+          removePatientSyncQueueItem(patientId, item.id);
+          upsertPatientSubmissionReceipt(patientId, {
+            id: item.id,
+            label: item.label,
+            status: "failed",
+            detail: getErrorMessage(error),
+          });
+          setSyncError(getErrorMessage(error));
+        }
+      }
+
+      if (syncedAnyItem) {
+        await loadPatientData();
+      }
+    } finally {
+      setSyncReceipts(loadPatientSubmissionReceipts(patientId));
+      setIsSyncingQueue(false);
+    }
+  };
+
+  const submitPatientRequest = async <
+    TResponse extends { crisisLevel: "none" | "high" | "critical"; crisisSummary: string | null },
+  >(
+    input: {
+      label: string;
+      url: string;
+      method: "POST" | "PATCH";
+      data: unknown;
+      crisisLevelHint: "none" | "high" | "critical";
+    },
+  ) => {
+    try {
+      const response = await apiRequest<TResponse>(input.url, {
+        method: input.method,
+        data: input.data,
+      });
+
+      const receiptId = `${input.method}-${Date.now()}`;
+      upsertPatientSubmissionReceipt(patientId, {
+        id: receiptId,
+        label: input.label,
+        status: "synced",
+        detail:
+          response.crisisLevel === "none"
+            ? "Sent to the care team."
+            : "Sent to the care team with a safety follow-up warning.",
+      });
+      refreshSyncState();
+      setLastSyncedAt(new Date().toISOString());
+      setSyncError(null);
+      setPatientSafetyNotice(
+        buildSafetyNotice(response.crisisLevel, false, response.crisisSummary),
+      );
+      return {
+        queued: false,
+        response,
+      };
+    } catch (error) {
+      if (!isNetworkError(error)) {
+        throw error;
+      }
+
+      const queuedItem = enqueuePatientSyncItem(patientId, {
+        label: input.label,
+        url: input.url,
+        method: input.method,
+        data: input.data,
+        crisisLevel: input.crisisLevelHint,
+      });
+
+      upsertPatientSubmissionReceipt(patientId, {
+        id: queuedItem.id,
+        label: input.label,
+        status: "queued",
+        detail:
+          input.crisisLevelHint === "none"
+            ? "Saved on this phone and waiting for connection."
+            : "Saved on this phone, but it has not reached staff yet.",
+      });
+      setPatientSafetyNotice(buildSafetyNotice(input.crisisLevelHint, true));
+      setSyncError("You are offline. This entry is stored on this phone and will retry.");
+      refreshSyncState();
+
+      return {
+        queued: true,
+        queueItemId: queuedItem.id,
+      };
+    }
+  };
+
   useEffect(() => {
     void loadPatientData();
   }, [patientId]);
+
+  useEffect(() => {
+    refreshSyncState();
+
+    const moodDraft = loadPatientDraft<{
+      selectedEmotion: EmotionName | null;
+      notes: string;
+      sleepHours: number;
+      stressLevel: number;
+      cravingLevel: number;
+      substanceUseToday: boolean;
+      moneyChangedToday: boolean;
+      medicationAdherence: MedicationAdherence;
+      missedMedicationName: string;
+      missedMedicationReason: MissedMedicationReason | "";
+      includeLocation: boolean;
+      editingEmotionId: number | null;
+    }>(patientId, "mood");
+    if (moodDraft?.value) {
+      setSelectedEmotion(moodDraft.value.selectedEmotion);
+      setNotes(moodDraft.value.notes);
+      setSleepHours(moodDraft.value.sleepHours);
+      setStressLevel(moodDraft.value.stressLevel);
+      setCravingLevel(moodDraft.value.cravingLevel);
+      setSubstanceUseToday(moodDraft.value.substanceUseToday);
+      setMoneyChangedToday(moodDraft.value.moneyChangedToday);
+      setMedicationAdherence(moodDraft.value.medicationAdherence);
+      setMissedMedicationName(moodDraft.value.missedMedicationName);
+      setMissedMedicationReason(moodDraft.value.missedMedicationReason);
+      setIncludeLocation(moodDraft.value.includeLocation);
+      setEditingEmotionId(moodDraft.value.editingEmotionId);
+    }
+
+    const morningDraft = loadPatientDraft<{
+      report: MorningReportFormState;
+      editingId: number | null;
+    }>(patientId, "morning");
+    if (morningDraft?.value) {
+      setMorningReport(morningDraft.value.report);
+      setEditingMorningReportId(morningDraft.value.editingId);
+    }
+
+    const nightDraft = loadPatientDraft<{
+      report: NightReportFormState;
+      editingId: number | null;
+    }>(patientId, "night");
+    if (nightDraft?.value) {
+      setNightReport(nightDraft.value.report);
+      setEditingNightReportId(nightDraft.value.editingId);
+    }
+
+    const weeklyDraft = loadPatientDraft<{
+      form: WeeklyScreeningFormState;
+      editingId: number | null;
+    }>(patientId, "weekly");
+    if (weeklyDraft?.value) {
+      setWeeklyScreening(weeklyDraft.value.form);
+      setEditingWeeklyScreeningId(weeklyDraft.value.editingId);
+    }
+  }, [patientId]);
+
+  useEffect(() => {
+    const handleOnlineStateChange = () => {
+      setIsOnline(window.navigator.onLine);
+    };
+
+    window.addEventListener("online", handleOnlineStateChange);
+    window.addEventListener("offline", handleOnlineStateChange);
+
+    return () => {
+      window.removeEventListener("online", handleOnlineStateChange);
+      window.removeEventListener("offline", handleOnlineStateChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isOnline) {
+      void processSyncQueue();
+    }
+  }, [isOnline, patientId]);
+
+  useEffect(() => {
+    if (!isOnline) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void processSyncQueue();
+    }, 15000);
+
+    return () => window.clearInterval(intervalId);
+  }, [isOnline, patientId, isSyncingQueue]);
+
+  useEffect(() => {
+    if (
+      hasMoodDraftData({
+        selectedEmotion,
+        notes,
+        missedMedicationName,
+        missedMedicationReason,
+        includeLocation,
+        editingEmotionId,
+        medicationAdherence,
+        sleepHours,
+        stressLevel,
+        cravingLevel,
+        substanceUseToday,
+        moneyChangedToday,
+      })
+    ) {
+      savePatientDraft(patientId, "mood", {
+        selectedEmotion,
+        notes,
+        sleepHours,
+        stressLevel,
+        cravingLevel,
+        substanceUseToday,
+        moneyChangedToday,
+        medicationAdherence,
+        missedMedicationName,
+        missedMedicationReason,
+        includeLocation,
+        editingEmotionId,
+      });
+      return;
+    }
+
+    clearPatientDraft(patientId, "mood");
+  }, [
+    patientId,
+    selectedEmotion,
+    notes,
+    sleepHours,
+    stressLevel,
+    cravingLevel,
+    substanceUseToday,
+    moneyChangedToday,
+    medicationAdherence,
+    missedMedicationName,
+    missedMedicationReason,
+    includeLocation,
+    editingEmotionId,
+  ]);
+
+  useEffect(() => {
+    if (hasMorningDraftData(morningReport, editingMorningReportId)) {
+      savePatientDraft(patientId, "morning", {
+        report: morningReport,
+        editingId: editingMorningReportId,
+      });
+      return;
+    }
+
+    clearPatientDraft(patientId, "morning");
+  }, [patientId, morningReport, editingMorningReportId]);
+
+  useEffect(() => {
+    if (hasNightDraftData(nightReport, editingNightReportId)) {
+      savePatientDraft(patientId, "night", {
+        report: nightReport,
+        editingId: editingNightReportId,
+      });
+      return;
+    }
+
+    clearPatientDraft(patientId, "night");
+  }, [patientId, nightReport, editingNightReportId]);
+
+  useEffect(() => {
+    if (hasWeeklyDraftData(weeklyScreening, editingWeeklyScreeningId)) {
+      savePatientDraft(patientId, "weekly", {
+        form: weeklyScreening,
+        editingId: editingWeeklyScreeningId,
+      });
+      return;
+    }
+
+    clearPatientDraft(patientId, "weekly");
+  }, [patientId, weeklyScreening, editingWeeklyScreeningId]);
 
   useEffect(() => {
     if (!consent?.gpsTracking) {
@@ -370,39 +874,49 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
       const method = editingEmotionId != null ? "PATCH" : "POST";
       const url =
         editingEmotionId != null ? `/api/emotions/${editingEmotionId}` : "/api/emotions";
-
-      await apiRequest<EmotionRecord>(url, {
+      const payload = {
+        ...(editingEmotionId == null ? { patientId } : {}),
+        emotion: selectedEmotion,
+        notes,
+        sleepHours,
+        stressLevel,
+        cravingLevel,
+        substanceUseToday,
+        moneyChangedToday,
+        medicationAdherence,
+        missedMedicationName:
+          medicationAdherence === "missed_some" ? missedMedicationName : null,
+        missedMedicationReason:
+          medicationAdherence === "missed_some" ? missedMedicationReason || null : null,
+        ...locationPayload,
+      };
+      const submissionResult = await submitPatientRequest<EmotionRecord>({
+        label: editingEmotionId != null ? "Daily check-in update" : "Daily check-in",
+        url,
         method,
-        data: {
-          ...(editingEmotionId == null ? { patientId } : {}),
-          emotion: selectedEmotion,
-          notes,
-          sleepHours,
-          stressLevel,
-          cravingLevel,
-          substanceUseToday,
-          moneyChangedToday,
-          medicationAdherence,
-          missedMedicationName:
-            medicationAdherence === "missed_some" ? missedMedicationName : null,
-          missedMedicationReason:
-            medicationAdherence === "missed_some" ? missedMedicationReason || null : null,
-          ...locationPayload,
-        },
+        data: payload,
+        crisisLevelHint: getClientCrisisLevelHint(notes, missedMedicationName),
       });
 
       const wasEditing = editingEmotionId != null;
 
       resetMoodForm();
+      clearPatientDraft(patientId, "mood");
       toast({
-        title: wasEditing ? "Check-in updated" : "Feeling saved",
-        description: locationCaptured
-          ? wasEditing
-            ? "Your updated check-in and location have been recorded."
-            : "Your latest check-in and location have been recorded."
+        title: submissionResult.queued
+          ? "Check-in saved on this phone"
           : wasEditing
-            ? "Your check-in changes have been saved."
-            : "Your latest check-in has been recorded.",
+            ? "Check-in updated"
+            : "Feeling saved",
+        description: submissionResult.queued
+          ? "Your check-in will retry automatically when the connection comes back."
+          : locationCaptured
+            ? wasEditing
+              ? "Your updated check-in and location have been recorded."
+              : "Your latest check-in and location have been recorded."
+            : wasEditing
+              ? "Your check-in changes have been saved."
+              : "Your latest check-in has been recorded.",
         variant: "success",
       });
 
@@ -416,7 +930,11 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
         });
       }
 
-      await loadPatientData();
+      if (!submissionResult.queued) {
+        await loadPatientData();
+      } else {
+        refreshSyncState();
+      }
       setActiveTab("history");
     } catch (error) {
       toast({
@@ -447,11 +965,10 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
 
     try {
       const wasEditing = editingMorningReportId != null;
-
-      await apiRequest<DailyReportRecord>(
-        wasEditing ? `/api/daily-reports/${editingMorningReportId}` : "/api/daily-reports",
-        {
-          method: wasEditing ? "PATCH" : "POST",
+      const submissionResult = await submitPatientRequest<DailyReportRecord>({
+        label: wasEditing ? "Morning report update" : "Morning report",
+        url: wasEditing ? `/api/daily-reports/${editingMorningReportId}` : "/api/daily-reports",
+        method: wasEditing ? "PATCH" : "POST",
         data: {
           ...(wasEditing ? {} : { patientId }),
           reportType: "morning",
@@ -468,18 +985,29 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
           mealsNote: null,
           notes: morningReport.notes,
         },
-        },
-      );
+        crisisLevelHint: getClientCrisisLevelHint(morningReport.notes),
+      });
 
       resetMorningReportForm();
+      clearPatientDraft(patientId, "morning");
       toast({
-        title: wasEditing ? "Morning report updated" : "Morning report saved",
-        description: wasEditing
-          ? "Your morning report changes have been saved."
-          : "Your sleep check-in has been added.",
+        title: submissionResult.queued
+          ? "Morning report saved on this phone"
+          : wasEditing
+            ? "Morning report updated"
+            : "Morning report saved",
+        description: submissionResult.queued
+          ? "This report will retry automatically when your connection returns."
+          : wasEditing
+            ? "Your morning report changes have been saved."
+            : "Your sleep check-in has been added.",
         variant: "success",
       });
-      await loadPatientData();
+      if (!submissionResult.queued) {
+        await loadPatientData();
+      } else {
+        refreshSyncState();
+      }
     } catch (error) {
       toast({
         title: "Could not save the morning report",
@@ -516,11 +1044,10 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
 
     try {
       const wasEditing = editingNightReportId != null;
-
-      await apiRequest<DailyReportRecord>(
-        wasEditing ? `/api/daily-reports/${editingNightReportId}` : "/api/daily-reports",
-        {
-          method: wasEditing ? "PATCH" : "POST",
+      const submissionResult = await submitPatientRequest<DailyReportRecord>({
+        label: wasEditing ? "Night report update" : "Night report",
+        url: wasEditing ? `/api/daily-reports/${editingNightReportId}` : "/api/daily-reports",
+        method: wasEditing ? "PATCH" : "POST",
         data: {
           ...(wasEditing ? {} : { patientId }),
           reportType: "night",
@@ -533,18 +1060,29 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
           mealsNote: nightReport.mealsNote,
           notes: nightReport.notes,
         },
-        },
-      );
+        crisisLevelHint: getClientCrisisLevelHint(nightReport.notes, nightReport.mealsNote),
+      });
 
       resetNightReportForm();
+      clearPatientDraft(patientId, "night");
       toast({
-        title: wasEditing ? "Night report updated" : "Night report saved",
-        description: wasEditing
-          ? "Your night report changes have been saved."
-          : "Tonight's sleep plan has been added.",
+        title: submissionResult.queued
+          ? "Night report saved on this phone"
+          : wasEditing
+            ? "Night report updated"
+            : "Night report saved",
+        description: submissionResult.queued
+          ? "This report will retry automatically when your connection returns."
+          : wasEditing
+            ? "Your night report changes have been saved."
+            : "Tonight's sleep plan has been added.",
         variant: "success",
       });
-      await loadPatientData();
+      if (!submissionResult.queued) {
+        await loadPatientData();
+      } else {
+        refreshSyncState();
+      }
     } catch (error) {
       toast({
         title: "Could not save the night report",
@@ -562,86 +1100,111 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
 
     try {
       const wasEditing = editingWeeklyScreeningId != null;
-      const savedScreening = await apiRequest<WeeklyScreeningRecord>(
-        wasEditing
-          ? `/api/weekly-screenings/${editingWeeklyScreeningId}`
-          : "/api/weekly-screenings",
-        {
-          method: wasEditing ? "PATCH" : "POST",
-        data: {
-          ...(wasEditing ? {} : { patientId }),
-          wishedDead: weeklyScreening.wishedDead,
-          familyBetterOffDead: weeklyScreening.familyBetterOffDead,
-          thoughtsKillingSelf: weeklyScreening.thoughtsKillingSelf,
-          thoughtsKillingSelfFrequency:
-            weeklyScreening.thoughtsKillingSelfFrequency === ""
-              ? null
-              : weeklyScreening.thoughtsKillingSelfFrequency,
-          everTriedToKillSelf: weeklyScreening.everTriedToKillSelf,
-          attemptTiming: weeklyScreening.everTriedToKillSelf
-            ? weeklyScreening.attemptTiming
-            : "none",
-          currentThoughts:
-            weeklyScreening.currentThoughts === ""
-              ? null
-              : weeklyScreening.currentThoughts === "yes",
-          depressedHardToFunction: weeklyScreening.depressedHardToFunction,
-          depressedFrequency:
-            weeklyScreening.depressedFrequency === ""
-              ? null
-              : weeklyScreening.depressedFrequency,
-          anxiousOnEdge: weeklyScreening.anxiousOnEdge,
-          anxiousFrequency:
-            weeklyScreening.anxiousFrequency === ""
-              ? null
-              : weeklyScreening.anxiousFrequency,
-          hopeless: weeklyScreening.hopeless,
-          couldNotEnjoyThings: weeklyScreening.couldNotEnjoyThings,
-          keepingToSelf: weeklyScreening.keepingToSelf,
-          moreIrritable: weeklyScreening.moreIrritable,
-          substanceUseMoreThanUsual: weeklyScreening.substanceUseMoreThanUsual,
-          substanceUseFrequency:
-            weeklyScreening.substanceUseFrequency === ""
-              ? null
-              : weeklyScreening.substanceUseFrequency,
-          sleepTrouble: weeklyScreening.sleepTrouble,
-          sleepTroubleFrequency:
-            weeklyScreening.sleepTroubleFrequency === ""
-              ? null
-              : weeklyScreening.sleepTroubleFrequency,
-          appetiteChange: weeklyScreening.appetiteChange,
-          appetiteChangeDirection:
-            weeklyScreening.appetiteChangeDirection === ""
-              ? null
-              : weeklyScreening.appetiteChangeDirection,
-          supportPerson: weeklyScreening.supportPerson,
-          reasonsForLiving: weeklyScreening.reasonsForLiving,
-          copingPlan: weeklyScreening.copingPlan,
-          needsHelpStayingSafe:
-            weeklyScreening.needsHelpStayingSafe === ""
-              ? null
-              : weeklyScreening.needsHelpStayingSafe === "yes",
-        },
-        },
-      );
+      const screeningPayload = {
+        ...(wasEditing ? {} : { patientId }),
+        wishedDead: weeklyScreening.wishedDead,
+        familyBetterOffDead: weeklyScreening.familyBetterOffDead,
+        thoughtsKillingSelf: weeklyScreening.thoughtsKillingSelf,
+        thoughtsKillingSelfFrequency:
+          weeklyScreening.thoughtsKillingSelfFrequency === ""
+            ? null
+            : weeklyScreening.thoughtsKillingSelfFrequency,
+        everTriedToKillSelf: weeklyScreening.everTriedToKillSelf,
+        attemptTiming: weeklyScreening.everTriedToKillSelf
+          ? weeklyScreening.attemptTiming
+          : "none",
+        currentThoughts:
+          weeklyScreening.currentThoughts === ""
+            ? null
+            : weeklyScreening.currentThoughts === "yes",
+        depressedHardToFunction: weeklyScreening.depressedHardToFunction,
+        depressedFrequency:
+          weeklyScreening.depressedFrequency === ""
+            ? null
+            : weeklyScreening.depressedFrequency,
+        anxiousOnEdge: weeklyScreening.anxiousOnEdge,
+        anxiousFrequency:
+          weeklyScreening.anxiousFrequency === ""
+            ? null
+            : weeklyScreening.anxiousFrequency,
+        hopeless: weeklyScreening.hopeless,
+        couldNotEnjoyThings: weeklyScreening.couldNotEnjoyThings,
+        keepingToSelf: weeklyScreening.keepingToSelf,
+        moreIrritable: weeklyScreening.moreIrritable,
+        substanceUseMoreThanUsual: weeklyScreening.substanceUseMoreThanUsual,
+        substanceUseFrequency:
+          weeklyScreening.substanceUseFrequency === ""
+            ? null
+            : weeklyScreening.substanceUseFrequency,
+        sleepTrouble: weeklyScreening.sleepTrouble,
+        sleepTroubleFrequency:
+          weeklyScreening.sleepTroubleFrequency === ""
+            ? null
+            : weeklyScreening.sleepTroubleFrequency,
+        appetiteChange: weeklyScreening.appetiteChange,
+        appetiteChangeDirection:
+          weeklyScreening.appetiteChangeDirection === ""
+            ? null
+            : weeklyScreening.appetiteChangeDirection,
+        supportPerson: weeklyScreening.supportPerson,
+        reasonsForLiving: weeklyScreening.reasonsForLiving,
+        copingPlan: weeklyScreening.copingPlan,
+        needsHelpStayingSafe:
+          weeklyScreening.needsHelpStayingSafe === ""
+            ? null
+            : weeklyScreening.needsHelpStayingSafe === "yes",
+      };
+      const submissionResult = await submitPatientRequest<WeeklyScreeningRecord>({
+        label: wasEditing ? "Weekly screen update" : "Weekly screen",
+        url:
+          wasEditing
+            ? `/api/weekly-screenings/${editingWeeklyScreeningId}`
+            : "/api/weekly-screenings",
+        method: wasEditing ? "PATCH" : "POST",
+        data: screeningPayload,
+        crisisLevelHint:
+          weeklyScreening.currentThoughts === "yes"
+            ? "critical"
+            : getClientCrisisLevelHint(
+                weeklyScreening.reasonsForLiving,
+                weeklyScreening.copingPlan,
+              ),
+      });
 
-      const disposition = getWeeklyScreeningDisposition(savedScreening);
+      const savedScreening =
+        submissionResult.queued && latestScreening
+          ? latestScreening
+          : submissionResult.response ?? latestScreening;
+
+      const disposition = savedScreening
+        ? getWeeklyScreeningDisposition(savedScreening)
+        : "positive";
 
       resetWeeklyScreeningForm();
+      clearPatientDraft(patientId, "weekly");
       toast({
-        title:
-          disposition === "urgent"
+        title: submissionResult.queued
+          ? "Weekly screen saved on this phone"
+          : disposition === "urgent"
             ? wasEditing
               ? "Weekly screen updated and needs urgent follow-up"
               : "Weekly screen saved and needs urgent follow-up"
             : wasEditing
               ? "Weekly screen updated"
               : "Weekly screen saved",
-        description: getWeeklyScreeningDispositionLabel(disposition),
+        description: submissionResult.queued
+          ? "This weekly screen will retry automatically when your connection returns."
+          : savedScreening
+            ? getWeeklyScreeningDispositionLabel(disposition)
+            : "Your weekly screen was saved.",
         variant: disposition === "negative" ? "success" : "info",
       });
 
-      await loadPatientData();
+      if (!submissionResult.queued) {
+        await loadPatientData();
+      } else {
+        refreshSyncState();
+      }
     } catch (error) {
       toast({
         title: "Could not save the weekly screen",
@@ -659,12 +1222,14 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
     if (
       !consentForm.moodTracking ||
       !consentForm.sleepReports ||
-      !consentForm.weeklyScreening
+      !consentForm.weeklyScreening ||
+      !consentForm.acknowledgeStaffedHours ||
+      !consentForm.acknowledgeEmergencyLimits
     ) {
       toast({
         title: "Core consent is required",
         description:
-          "Mood tracking, sleep reports, and weekly screening need to be accepted before you can use the patient workspace.",
+          "Before you can use the patient workspace, please accept the core tracking consent and acknowledge the pilot's staffed-hours and emergency limits.",
         variant: "info",
       });
       return;
@@ -681,7 +1246,7 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
       toast({
         title: "Consent saved",
         description:
-          "Your privacy choices have been recorded. GPS remains optional and can stay off if you prefer.",
+          "Your privacy choices and pilot-safety acknowledgements have been recorded. GPS remains optional and can stay off if you prefer.",
         variant: "success",
       });
     } catch (error) {
@@ -764,8 +1329,13 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
     ? getWeeklyScreeningDispositionLabel(getWeeklyScreeningDisposition(latestScreening))
     : "Not started";
   const hasRequiredConsent = Boolean(
-    consent?.moodTracking && consent?.sleepReports && consent?.weeklyScreening,
+    consent?.moodTracking &&
+      consent?.sleepReports &&
+      consent?.weeklyScreening &&
+      consent?.acknowledgeStaffedHours &&
+      consent?.acknowledgeEmergencyLimits,
   );
+  const pendingSyncCount = loadPatientSyncQueue(patientId).length;
   const nextStepLabel = screeningDue
     ? "Weekly screen"
     : morningDueNow
@@ -886,6 +1456,93 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
                 value={activeTab}
                 onChange={(nextValue) => setActiveTab(nextValue as PatientWorkspace)}
               />
+
+              <div className="mt-6 grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
+                <section className="rounded-[28px] border border-slate-200 bg-white px-5 py-5 shadow-sm">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="mini-heading">Sync Status</p>
+                      <h3 className="mt-2 text-lg font-semibold text-slate-900">
+                        {isOnline ? "Connected" : "Offline"}
+                      </h3>
+                    </div>
+                    <span
+                      className={`badge ${
+                        isOnline ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-900"
+                      }`}
+                    >
+                      {pendingSyncCount > 0 ? `${pendingSyncCount} waiting` : "Up to date"}
+                    </span>
+                  </div>
+                  <p className="mt-3 text-sm leading-6 text-slate-600">
+                    {syncError
+                      ? syncError
+                      : pendingSyncCount > 0
+                        ? "Recent entries are saved on this phone and will retry automatically."
+                        : lastSyncedAt
+                          ? `Last sync ${format(new Date(lastSyncedAt), "MMM d, yyyy 'at' h:mm a")}.`
+                          : "New entries send right away when your connection is available."}
+                  </p>
+
+                  <div className="mt-4 space-y-2">
+                    {syncReceipts.length > 0 ? (
+                      syncReceipts.slice(0, 3).map((receipt) => (
+                        <div
+                          key={receipt.id}
+                          className="rounded-[20px] border border-slate-200 bg-slate-50 px-4 py-3"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <p className="text-sm font-semibold text-slate-900">{receipt.label}</p>
+                            <span
+                              className={`badge ${
+                                receipt.status === "synced"
+                                  ? "bg-emerald-100 text-emerald-800"
+                                  : receipt.status === "queued"
+                                    ? "bg-amber-100 text-amber-900"
+                                    : receipt.status === "failed"
+                                      ? "bg-rose-100 text-rose-900"
+                                      : "bg-slate-100 text-slate-700"
+                              }`}
+                            >
+                              {receipt.status}
+                            </span>
+                          </div>
+                          <p className="mt-2 text-xs leading-5 text-slate-600">{receipt.detail}</p>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="rounded-[20px] border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-sm text-slate-500">
+                        Recent submission receipts will appear here after you save an entry.
+                      </div>
+                    )}
+                  </div>
+                </section>
+
+                <section
+                  className={`rounded-[28px] border px-5 py-5 shadow-sm ${
+                    patientSafetyNotice?.tone === "warning"
+                      ? "border-amber-200 bg-amber-50"
+                      : "border-sky-200 bg-sky-50"
+                  }`}
+                >
+                  <p
+                    className={`mini-heading ${
+                      patientSafetyNotice?.tone === "warning"
+                        ? "text-amber-800"
+                        : "text-sky-700"
+                    }`}
+                  >
+                    Pilot Boundaries
+                  </p>
+                  <h3 className="mt-2 text-lg font-semibold text-slate-900">
+                    {patientSafetyNotice?.title ?? "This pilot is not 24/7 monitored."}
+                  </h3>
+                  <p className="mt-3 text-sm leading-6 text-slate-700">
+                    {patientSafetyNotice?.detail ??
+                      "Entries help your care team see changes between visits, but urgent danger still needs direct emergency help. Use this tool during the pilot's staffed workflow, not as an emergency-response service."}
+                  </p>
+                </section>
+              </div>
             </section>
 
             <div className="content-stack">
@@ -1014,7 +1671,8 @@ function PatientConsentGate({
       <h2 className="hero-title mt-4">Review your privacy choices before using L.A.M.B.</h2>
       <p className="hero-text mt-4">
         This pilot tracks mood, sleep, and weekly safety screens to help your care team see
-        what happens between visits. GPS is optional and stays off unless you say yes.
+        what happens between visits. GPS is optional and stays off unless you say yes. L.A.M.B
+        is not 24/7 emergency monitoring.
       </p>
 
       <form className="mt-8 space-y-4" onSubmit={onSubmit}>
@@ -1042,10 +1700,26 @@ function PatientConsentGate({
           checked={consentForm.gpsTracking}
           onChange={(checked) => onChange({ ...consentForm, gpsTracking: checked })}
         />
+        <ConsentCheckbox
+          title="I understand the staffed-hours limit"
+          description="I understand this pilot is reviewed during staffed workflows and may not be watched immediately after every submission."
+          checked={consentForm.acknowledgeStaffedHours}
+          onChange={(checked) =>
+            onChange({ ...consentForm, acknowledgeStaffedHours: checked })
+          }
+        />
+        <ConsentCheckbox
+          title="I understand this is not emergency care"
+          description="If I am in immediate danger or need urgent help, I will contact emergency services or go to the nearest emergency department instead of waiting on the app."
+          checked={consentForm.acknowledgeEmergencyLimits}
+          onChange={(checked) =>
+            onChange({ ...consentForm, acknowledgeEmergencyLimits: checked })
+          }
+        />
 
         <div className="rounded-[24px] border border-amber-200 bg-amber-50 px-5 py-4 text-sm leading-6 text-amber-900">
-          Mood tracking, sleep reports, and weekly safety screens must be accepted to use the
-          patient workspace in this pilot. GPS stays optional.
+          Mood tracking, sleep reports, weekly safety screens, and the two pilot-safety
+          acknowledgements must be accepted before you can use this workspace. GPS stays optional.
         </div>
 
         <button type="submit" className="btn btn-primary" disabled={isSavingConsent}>

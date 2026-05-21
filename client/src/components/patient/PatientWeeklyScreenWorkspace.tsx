@@ -1,4 +1,4 @@
-import type { FormEvent, ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { AlertCircle, ClipboardCheck, Shield } from "lucide-react";
 import type {
   AppetiteChangeDirection,
@@ -75,6 +75,7 @@ export default function PatientWeeklyScreenWorkspace({
   onSubmit,
   onCancelEdit,
 }: PatientWeeklyScreenWorkspaceProps) {
+  const [showAdditionalContext, setShowAdditionalContext] = useState(false);
   const latestDisposition = latestScreening
     ? getWeeklyScreeningDisposition(latestScreening)
     : null;
@@ -84,6 +85,22 @@ export default function PatientWeeklyScreenWorkspace({
   const latestFollowUpDetails = latestScreening
     ? getWeeklyScreeningFollowUpDetails(latestScreening)
     : [];
+
+  useEffect(() => {
+    if (
+      form.couldNotEnjoyThings ||
+      form.keepingToSelf ||
+      form.moreIrritable ||
+      form.substanceUseMoreThanUsual ||
+      form.substanceUseFrequency !== "" ||
+      form.supportPerson.trim().length > 0 ||
+      form.reasonsForLiving.trim().length > 0 ||
+      form.copingPlan.trim().length > 0 ||
+      form.needsHelpStayingSafe !== ""
+    ) {
+      setShowAdditionalContext(true);
+    }
+  }, [form]);
 
   return (
     <div className="content-grid">
@@ -288,46 +305,6 @@ export default function PatientWeeklyScreenWorkspace({
                 onChange={(value) => onChange({ ...form, hopeless: value })}
               />
               <YesNoField
-                label="Have you felt like you could not enjoy the things that usually help?"
-                value={form.couldNotEnjoyThings}
-                onChange={(value) => onChange({ ...form, couldNotEnjoyThings: value })}
-              />
-              <YesNoField
-                label="Have you been keeping to yourself more than usual?"
-                value={form.keepingToSelf}
-                onChange={(value) => onChange({ ...form, keepingToSelf: value })}
-              />
-              <YesNoField
-                label="Have you been more irritable than usual?"
-                value={form.moreIrritable}
-                onChange={(value) => onChange({ ...form, moreIrritable: value })}
-              />
-              <YesNoField
-                label="Have you used more drugs or alcohol than usual?"
-                value={form.substanceUseMoreThanUsual}
-                onChange={(value) =>
-                  onChange({
-                    ...form,
-                    substanceUseMoreThanUsual: value,
-                    substanceUseFrequency: value ? form.substanceUseFrequency : "",
-                  })
-                }
-              />
-              {form.substanceUseMoreThanUsual ? (
-                <SelectField
-                  label="If yes, how often was it more than usual this week?"
-                  value={form.substanceUseFrequency}
-                  placeholder="Choose how often"
-                  options={weeklyScreeningFrequencyLabels}
-                  onChange={(value) =>
-                    onChange({
-                      ...form,
-                      substanceUseFrequency: value as WeeklyScreeningFormState["substanceUseFrequency"],
-                    })
-                  }
-                />
-              ) : null}
-              <YesNoField
                 label="Have you had trouble with sleep this week?"
                 value={form.sleepTrouble}
                 onChange={(value) =>
@@ -381,64 +358,128 @@ export default function PatientWeeklyScreenWorkspace({
           </div>
 
           <div className="soft-panel">
-            <p className="mini-heading">Supports</p>
-            <div className="mt-5 form-grid">
-              <div className="md:col-span-2">
-                <Field label="Trusted person you can talk to (optional)">
-                  <input
-                    className="input"
-                    value={form.supportPerson}
-                    onChange={(event) =>
-                      onChange({ ...form, supportPerson: event.target.value })
-                    }
-                    placeholder="Name or relationship"
-                  />
-                </Field>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="mini-heading">More Context</p>
+                <p className="section-copy mt-2">
+                  Open this only if you want to add extra detail for the care team.
+                </p>
               </div>
-              <div className="md:col-span-2">
-                <Field label="What are some reasons you want to stay safe or keep going? (optional)">
-                  <textarea
-                    className="input min-h-28 resize-y"
-                    value={form.reasonsForLiving}
-                    onChange={(event) =>
-                      onChange({ ...form, reasonsForLiving: event.target.value })
-                    }
-                    placeholder="Family, faith, goals, pets, responsibilities, or anything else that keeps you going"
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setShowAdditionalContext((current) => !current)}
+              >
+                {showAdditionalContext ? "Hide extra questions" : "Show extra questions"}
+              </button>
+            </div>
+
+            {showAdditionalContext ? (
+              <div className="mt-5 space-y-6">
+                <div className="form-grid">
+                  <YesNoField
+                    label="Have you felt like you could not enjoy the things that usually help?"
+                    value={form.couldNotEnjoyThings}
+                    onChange={(value) => onChange({ ...form, couldNotEnjoyThings: value })}
                   />
-                </Field>
-              </div>
-              <div className="md:col-span-2">
-                <Field label="What helps you stay safe? (optional)">
-                  <textarea
-                    className="input min-h-28 resize-y"
-                    value={form.copingPlan}
-                    onChange={(event) =>
-                      onChange({ ...form, copingPlan: event.target.value })
-                    }
-                    placeholder="People to call, places to go, or steps that help"
+                  <YesNoField
+                    label="Have you been keeping to yourself more than usual?"
+                    value={form.keepingToSelf}
+                    onChange={(value) => onChange({ ...form, keepingToSelf: value })}
                   />
-                </Field>
-              </div>
-              <div className="md:col-span-2">
-                <Field label="Do you think you need help to keep yourself safe right now?">
-                  <select
-                    className="input"
-                    value={form.needsHelpStayingSafe}
-                    onChange={(event) =>
+                  <YesNoField
+                    label="Have you been more irritable than usual?"
+                    value={form.moreIrritable}
+                    onChange={(value) => onChange({ ...form, moreIrritable: value })}
+                  />
+                  <YesNoField
+                    label="Have you used more drugs or alcohol than usual?"
+                    value={form.substanceUseMoreThanUsual}
+                    onChange={(value) =>
                       onChange({
                         ...form,
-                        needsHelpStayingSafe:
-                          event.target.value as WeeklyScreeningFormState["needsHelpStayingSafe"],
+                        substanceUseMoreThanUsual: value,
+                        substanceUseFrequency: value ? form.substanceUseFrequency : "",
                       })
                     }
-                  >
-                    <option value="">Choose one</option>
-                    <option value="yes">Yes</option>
-                    <option value="no">No</option>
-                  </select>
-                </Field>
+                  />
+                  {form.substanceUseMoreThanUsual ? (
+                    <SelectField
+                      label="If yes, how often was it more than usual this week?"
+                      value={form.substanceUseFrequency}
+                      placeholder="Choose how often"
+                      options={weeklyScreeningFrequencyLabels}
+                      onChange={(value) =>
+                        onChange({
+                          ...form,
+                          substanceUseFrequency:
+                            value as WeeklyScreeningFormState["substanceUseFrequency"],
+                        })
+                      }
+                    />
+                  ) : null}
+                </div>
+
+                <div className="form-grid">
+                  <div className="md:col-span-2">
+                    <Field label="Trusted person you can talk to (optional)">
+                      <input
+                        className="input"
+                        value={form.supportPerson}
+                        onChange={(event) =>
+                          onChange({ ...form, supportPerson: event.target.value })
+                        }
+                        placeholder="Name or relationship"
+                      />
+                    </Field>
+                  </div>
+                  <div className="md:col-span-2">
+                    <Field label="What are some reasons you want to stay safe or keep going? (optional)">
+                      <textarea
+                        className="input min-h-28 resize-y"
+                        value={form.reasonsForLiving}
+                        onChange={(event) =>
+                          onChange({ ...form, reasonsForLiving: event.target.value })
+                        }
+                        placeholder="Family, faith, goals, pets, responsibilities, or anything else that keeps you going"
+                      />
+                    </Field>
+                  </div>
+                  <div className="md:col-span-2">
+                    <Field label="What helps you stay safe? (optional)">
+                      <textarea
+                        className="input min-h-28 resize-y"
+                        value={form.copingPlan}
+                        onChange={(event) =>
+                          onChange({ ...form, copingPlan: event.target.value })
+                        }
+                        placeholder="People to call, places to go, or steps that help"
+                      />
+                    </Field>
+                  </div>
+                  <div className="md:col-span-2">
+                    <Field label="Do you think you need help to keep yourself safe right now?">
+                      <select
+                        className="input"
+                        value={form.needsHelpStayingSafe}
+                        onChange={(event) =>
+                          onChange({
+                            ...form,
+                            needsHelpStayingSafe:
+                              event.target
+                                .value as WeeklyScreeningFormState["needsHelpStayingSafe"],
+                          })
+                        }
+                      >
+                        <option value="">Choose one</option>
+                        <option value="yes">Yes</option>
+                        <option value="no">No</option>
+                      </select>
+                    </Field>
+                  </div>
+                </div>
               </div>
-            </div>
+            ) : null}
           </div>
 
           <div className="flex flex-col gap-3">
@@ -483,17 +524,17 @@ export default function PatientWeeklyScreenWorkspace({
             <div>
               <h3 className="section-title text-lg">What happens if you answer yes?</h3>
               <p className="section-copy">
-                A positive screen helps staff know that follow-up is needed. If you are in immediate danger, call emergency services right away.
+                A positive screen helps staff know that follow-up is needed, but this pilot is not continuously monitored. If you are in immediate danger, call emergency services right away.
               </p>
             </div>
           </div>
 
           <div className="mt-5 space-y-3">
             <div className="rounded-[22px] border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
-              If you report current thoughts about harming yourself, staff should treat that as immediate follow-up.
+              If you report current thoughts about harming yourself, staff should treat that as immediate follow-up during staffed hours, but you should still seek urgent help directly if you cannot stay safe right now.
             </div>
             <div className="rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-700">
-              Positive answers may lead to a same-day safety assessment, a safety plan, and a faster follow-up.
+              Positive answers may lead to a same-day safety assessment, a safety plan, and a faster follow-up. The app should never be treated as a guarantee that someone is watching every minute.
             </div>
           </div>
 

@@ -434,7 +434,7 @@ export default function PatientMoodWorkspace({
           <div className="flex items-start gap-3">
             <ShieldCheck className="mt-0.5 h-5 w-5" />
             <p>
-              Your entries stay on this device&apos;s local database and help your care team notice patterns over time.
+              Your entries help the care team notice patterns between visits, but this pilot is not 24/7 emergency monitoring and urgent danger still needs direct emergency help.
             </p>
           </div>
         </div>
