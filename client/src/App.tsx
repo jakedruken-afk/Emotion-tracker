@@ -7,10 +7,12 @@ import {
   useNavigate,
   useParams,
 } from "react-router-dom";
-import type { AuthUser, UserRole } from "@shared/contracts";
+import { authUserSchema, type AuthUser, type UserRole } from "@shared/contracts";
 import { ToastProvider } from "./components/ToastProvider";
-import { apiRequest } from "./lib/api";
+import { apiRequest, clearStoredSession } from "./lib/api";
 import ActivateInvitePage from "./pages/ActivateInvitePage";
+import AdminPage from "./pages/AdminPage";
+import AdminSetupPage from "./pages/AdminSetupPage";
 import DoctorReviewPage from "./pages/DoctorReviewPage";
 import LoginPage from "./pages/LoginPage";
 import NotFoundPage from "./pages/NotFoundPage";
@@ -18,7 +20,11 @@ import PatientPage from "./pages/PatientPage";
 import SupportAccessPage from "./pages/SupportAccessPage";
 import SupportPage from "./pages/SupportPage";
 
-function getDefaultPath(user: Pick<AuthUser, "role"> | null) {
+function getDefaultPath(user: Pick<AuthUser, "role" | "isAppAdmin"> | null) {
+  if (user?.isAppAdmin) {
+    return "/admin";
+  }
+
   if (user?.role === "patient") {
     return "/patient";
   }
@@ -67,8 +73,10 @@ export default function App() {
 
     void apiRequest<AuthUser>("/api/auth/me")
       .then((nextUser) => {
+        const parsedUser = authUserSchema.safeParse(nextUser);
+
         if (isMounted) {
-          setUser(nextUser);
+          setUser(parsedUser.success ? parsedUser.data : null);
         }
       })
       .catch(() => {
@@ -105,6 +113,7 @@ export default function App() {
       // Clear the local user state even if the session is already gone.
     }
 
+    clearStoredSession();
     setUser(null);
     navigate("/login", { replace: true });
   };
@@ -140,6 +149,26 @@ export default function App() {
             ) : (
               <InviteActivationRoute onActivated={handleLogin} />
             )
+          }
+        />
+        <Route
+          path="/admin/setup"
+          element={
+            isAuthLoading ? (
+              <LoadingScreen />
+            ) : user ? (
+              <Navigate to={getDefaultPath(user)} replace />
+            ) : (
+              <AdminSetupPage onSetup={handleLogin} />
+            )
+          }
+        />
+        <Route
+          path="/admin"
+          element={
+            <ProtectedRoute user={user} isLoading={isAuthLoading} role="support">
+              <AdminPage user={user as AuthUser} onLogout={handleLogout} />
+            </ProtectedRoute>
           }
         />
         <Route
@@ -210,7 +239,7 @@ function InviteActivationRoute({
 function LoadingScreen() {
   return (
     <div className="page-shell">
-      <div className="panel mx-auto max-w-xl p-10 text-center">
+      <div className="panel mx-auto max-w-xl p-5 text-center md:p-10">
         <p className="mini-heading">Loading</p>
         <h1 className="hero-title mt-4">Checking your secure session...</h1>
         <p className="hero-text mt-4">

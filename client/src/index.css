@@ -15,15 +15,23 @@
     --brand-teal: #4aa7b1;
     --brand-cream: #fffdf8;
     --brand-soft-sage: #eef8ef;
+    --safe-area-top: env(safe-area-inset-top, 0px);
+    --safe-area-right: env(safe-area-inset-right, 0px);
+    --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-area-left: env(safe-area-inset-left, 0px);
   }
 
   html {
+    min-height: 100%;
     color-scheme: light;
     scroll-behavior: smooth;
+    background: #f4fffc;
   }
 
   body {
     @apply min-h-screen text-slate-900 antialiased;
+    min-height: 100svh;
+    overflow-x: hidden;
     font-family: "Aptos", "Trebuchet MS", "Segoe UI", sans-serif;
     background:
       radial-gradient(circle at top left, rgba(189, 238, 224, 0.55), transparent 28%),
@@ -54,6 +62,7 @@
 
   #root {
     @apply min-h-screen;
+    min-height: 100svh;
   }
 }
 
@@ -61,6 +70,7 @@
   .app-shell {
     @apply min-h-screen;
     position: relative;
+    padding-bottom: var(--safe-area-bottom);
   }
 
   .app-shell::before {
@@ -78,24 +88,36 @@
     @apply sticky top-0 z-30 border-b backdrop-blur-xl;
     background: rgba(255, 255, 249, 0.76);
     border-color: rgba(112, 181, 184, 0.16);
+    padding-top: var(--safe-area-top);
   }
 
   .app-container {
-    @apply mx-auto w-full max-w-7xl px-4;
+    @apply mx-auto w-full max-w-7xl px-3 sm:px-4;
+    padding-left: max(0.75rem, var(--safe-area-left));
+    padding-right: max(0.75rem, var(--safe-area-right));
   }
 
   .page-shell {
-    @apply flex min-h-screen items-center justify-center px-4 py-10;
+    @apply flex min-h-screen items-start justify-center px-3 py-3 sm:px-4 sm:py-6 md:items-center md:py-10;
+    min-height: 100svh;
+    padding-top: calc(0.75rem + var(--safe-area-top));
+    padding-bottom: calc(0.75rem + var(--safe-area-bottom));
     background:
       radial-gradient(circle at 12% 10%, rgba(198, 240, 224, 0.34), transparent 22%),
       radial-gradient(circle at 88% 12%, rgba(124, 215, 220, 0.24), transparent 22%),
       linear-gradient(180deg, #fffef9 0%, #f4fffc 100%);
   }
 
+  @supports (min-height: 100dvh) {
+    .page-shell {
+      min-height: 100dvh;
+    }
+  }
+
   .hero-panel,
   .panel,
   .surface-panel {
-    @apply rounded-[32px] border;
+    @apply rounded-[24px] border md:rounded-[32px];
     background: var(--brand-surface);
     border-color: var(--brand-line);
     box-shadow: var(--brand-shadow);
@@ -103,7 +125,7 @@
   }
 
   .hero-panel {
-    @apply overflow-hidden p-6 md:p-8;
+    @apply overflow-hidden p-4 md:p-8;
     background:
       radial-gradient(circle at top right, rgba(191, 239, 225, 0.42), transparent 28%),
       radial-gradient(circle at bottom left, rgba(128, 215, 220, 0.24), transparent 30%),
@@ -111,17 +133,17 @@
   }
 
   .surface-panel {
-    @apply p-5 md:p-6;
+    @apply p-4 md:p-6;
   }
 
   .soft-panel {
-    @apply rounded-[28px] border p-5;
+    @apply rounded-[22px] border p-4 md:rounded-[28px] md:p-5;
     border-color: rgba(125, 184, 184, 0.24);
     background: rgba(247, 255, 252, 0.88);
   }
 
   .warm-panel {
-    @apply rounded-[28px] border p-5;
+    @apply rounded-[22px] border p-4 md:rounded-[28px] md:p-5;
     border-color: rgba(170, 223, 207, 0.36);
     background: linear-gradient(180deg, rgba(250, 255, 251, 0.98), rgba(242, 252, 248, 0.9));
   }
@@ -140,21 +162,21 @@
   }
 
   .hero-title {
-    @apply mt-3 text-3xl font-bold leading-tight md:text-4xl;
+    @apply mt-2 text-[1.65rem] font-bold leading-tight md:mt-3 md:text-4xl;
     color: var(--brand-ink);
   }
 
   .hero-text {
-    @apply mt-4 max-w-2xl text-sm leading-7 md:text-base;
+    @apply mt-2 max-w-2xl text-sm leading-6 md:mt-4 md:text-base md:leading-7;
     color: var(--brand-soft-ink);
   }
 
   .metric-grid {
-    @apply grid gap-4 sm:grid-cols-2;
+    @apply grid gap-3 sm:grid-cols-2 md:gap-4;
   }
 
   .metric-tile {
-    @apply rounded-[26px] border px-4 py-4;
+    @apply rounded-[20px] border px-3 py-3 md:rounded-[26px] md:px-4 md:py-4;
     border-color: rgba(122, 184, 182, 0.2);
     background: rgba(255, 255, 252, 0.85);
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
@@ -186,7 +208,7 @@
   }
 
   .metric-value {
-    @apply mt-3 text-2xl font-bold md:text-3xl;
+    @apply mt-2 text-xl font-bold md:mt-3 md:text-3xl;
     color: var(--brand-ink);
   }
 
@@ -196,11 +218,11 @@
   }
 
   .tab-row {
-    @apply mt-6 flex gap-3 overflow-x-auto pb-1;
+    @apply mt-4 flex gap-2 overflow-x-auto pb-1 md:mt-6 md:gap-3;
   }
 
   .tab-pill {
-    @apply relative min-w-[160px] shrink-0 rounded-[24px] border px-4 py-3 text-left transition;
+    @apply relative min-w-[132px] shrink-0 rounded-[18px] border px-3 py-2.5 text-left transition md:min-w-[160px] md:rounded-[24px] md:px-4 md:py-3;
     border-color: rgba(126, 186, 184, 0.22);
     background: rgba(255, 255, 252, 0.78);
   }
@@ -233,11 +255,11 @@
   }
 
   .content-stack {
-    @apply mt-6 space-y-6;
+    @apply mt-4 space-y-4 md:mt-6 md:space-y-6;
   }
 
   .content-grid {
-    @apply grid gap-6 xl:grid-cols-[1.2fr_0.85fr];
+    @apply grid gap-4 md:gap-6 xl:grid-cols-[1.2fr_0.85fr];
   }
 
   .section-title {
@@ -251,7 +273,7 @@
   }
 
   .selection-card {
-    @apply flex items-center gap-4 rounded-[28px] border p-5 text-left transition duration-200;
+    @apply flex items-start gap-3 rounded-[20px] border p-3.5 text-left transition duration-200 md:items-center md:gap-4 md:rounded-[28px] md:p-5;
     border-color: rgba(122, 184, 182, 0.22);
     box-shadow: 0 18px 36px -30px rgba(63, 123, 127, 0.28);
   }
@@ -266,7 +288,7 @@
   }
 
   .input {
-    @apply w-full rounded-[22px] border px-4 py-3 text-base shadow-sm outline-none transition placeholder:text-slate-400;
+    @apply w-full rounded-[18px] border px-4 py-2.5 text-base shadow-sm outline-none transition placeholder:text-slate-400 md:rounded-[22px] md:py-3;
     border-color: rgba(127, 184, 182, 0.28);
     background: rgba(255, 255, 252, 0.96);
     color: var(--brand-ink);
@@ -278,7 +300,7 @@
   }
 
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-[22px] px-4 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60;
+    @apply inline-flex items-center justify-center gap-2 rounded-[18px] px-3.5 py-2.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 md:rounded-[22px] md:px-4 md:py-3;
   }
 
   .btn-primary {
@@ -307,7 +329,7 @@
   }
 
   .summary-row {
-    @apply flex items-center justify-between gap-3 rounded-[22px] border px-4 py-3 text-sm;
+    @apply flex items-center justify-between gap-3 rounded-[18px] border px-3 py-2.5 text-sm md:rounded-[22px] md:px-4 md:py-3;
     border-color: rgba(124, 182, 181, 0.2);
     background: rgba(247, 255, 252, 0.82);
     color: #5d7e81;
@@ -319,13 +341,13 @@
   }
 
   .timeline-card {
-    @apply rounded-[24px] border p-4;
+    @apply rounded-[20px] border p-3.5 md:rounded-[24px] md:p-4;
     border-color: rgba(125, 184, 182, 0.22);
     background: rgba(255, 255, 252, 0.86);
   }
 
   .accent-banner {
-    @apply rounded-[28px] border px-5 py-4 text-sm;
+    @apply rounded-[22px] border px-4 py-3 text-sm md:rounded-[28px] md:px-5 md:py-4;
     border-color: rgba(113, 204, 182, 0.28);
     background: linear-gradient(135deg, rgba(238, 255, 249, 0.94), rgba(252, 255, 253, 0.82));
     color: #2e6c63;
@@ -382,16 +404,16 @@
 
   .brand-icon-shell {
     @apply relative shrink-0 overflow-hidden rounded-full border;
-    width: 66px;
-    height: 66px;
+    width: 54px;
+    height: 54px;
     border-color: rgba(116, 192, 190, 0.3);
     background: linear-gradient(160deg, rgba(226, 249, 240, 0.98), rgba(119, 215, 220, 0.94));
     box-shadow: 0 18px 35px -24px rgba(57, 128, 132, 0.34);
   }
 
   .brand-icon-shell-showcase {
-    width: 126px;
-    height: 126px;
+    width: 82px;
+    height: 82px;
     border-color: rgba(116, 192, 190, 0.26);
     box-shadow: 0 24px 42px -28px rgba(57, 128, 132, 0.28);
   }
@@ -420,23 +442,25 @@
   }
 
   .brand-wordmark {
-    @apply text-xl font-bold tracking-[0.18em] uppercase;
+    @apply text-lg font-bold uppercase md:text-xl;
     color: #2b9096;
-    letter-spacing: 0.22em;
+    letter-spacing: 0.08em;
   }
 
   .brand-tagline {
-    @apply mt-1 text-xs font-semibold uppercase tracking-[0.2em];
+    @apply mt-1 text-[11px] font-semibold uppercase md:text-xs;
+    letter-spacing: 0.08em;
     color: #6d9999;
   }
 
   .brand-context {
-    @apply mt-2 text-xs font-semibold uppercase tracking-[0.22em];
+    @apply mt-1 text-[11px] font-semibold uppercase md:mt-2 md:text-xs;
+    letter-spacing: 0.08em;
     color: #3b979d;
   }
 
   .brand-subcopy {
-    @apply mt-1 text-sm leading-6;
+    @apply mt-1 text-sm leading-5 md:leading-6;
     color: var(--brand-soft-ink);
   }
 
@@ -445,7 +469,7 @@
   }
 
   .brand-hero-frame {
-    @apply overflow-hidden border p-4;
+    @apply overflow-hidden border p-3 md:p-4;
     width: min(100%, 360px);
     border-radius: 34px;
     border-color: rgba(120, 196, 191, 0.26);
@@ -463,6 +487,69 @@
 
   .brand-hero-copy {
     @apply max-w-md;
+  }
+}
+
+@media (min-width: 768px) {
+  .brand-icon-shell {
+    width: 66px;
+    height: 66px;
+  }
+
+  .brand-icon-shell-showcase {
+    width: 126px;
+    height: 126px;
+  }
+}
+
+@media (max-width: 640px) {
+  html {
+    font-size: 15px;
+  }
+
+  .page-shell {
+    justify-content: flex-start;
+    padding-top: calc(0.5rem + var(--safe-area-top));
+    padding-bottom: calc(0.5rem + var(--safe-area-bottom));
+  }
+
+  .app-topbar .app-container {
+    padding-top: 0.625rem;
+    padding-bottom: 0.625rem;
+  }
+
+  .app-topbar .brand-icon-shell {
+    width: 44px;
+    height: 44px;
+  }
+
+  .app-topbar .brand-subcopy {
+    display: none;
+  }
+
+  .workspace-panel {
+    max-width: 22.5rem;
+    border-radius: 22px;
+  }
+
+  .workspace-panel .brand-icon-shell-showcase {
+    width: 58px;
+    height: 58px;
+  }
+
+  .workspace-panel .selection-card {
+    align-items: center;
+    border-radius: 18px;
+    padding: 0.8rem;
+  }
+
+  .selection-card {
+    box-shadow: 0 14px 28px -24px rgba(63, 123, 127, 0.28);
+  }
+
+  .mini-heading {
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
   }
 }
 

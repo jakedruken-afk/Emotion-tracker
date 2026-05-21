@@ -3,6 +3,9 @@ import { z } from "zod";
 export const roleOptions = ["patient", "support"] as const;
 export type UserRole = (typeof roleOptions)[number];
 
+export const sessionModeOptions = ["cookie", "header"] as const;
+export type SessionMode = (typeof sessionModeOptions)[number];
+
 export const emotionOptions = ["Happy", "Sad", "Angry", "Worried"] as const;
 export type EmotionName = (typeof emotionOptions)[number];
 
@@ -86,6 +89,25 @@ export type CrisisLevel = (typeof crisisLevelOptions)[number];
 export const entryEntityTypeOptions = ["emotion", "daily_report", "weekly_screening"] as const;
 export type EntryEntityType = (typeof entryEntityTypeOptions)[number];
 
+export const observationLinkedEntityTypeOptions = [
+  ...entryEntityTypeOptions,
+  "observation",
+] as const;
+export type ObservationLinkedEntityType =
+  (typeof observationLinkedEntityTypeOptions)[number];
+
+export const observationStatusOptions = ["open", "acknowledged"] as const;
+export type ObservationStatus = (typeof observationStatusOptions)[number];
+
+export const demoScenarioIdOptions = [
+  "stable-low-risk",
+  "worsening-routine",
+  "missed-med-details",
+  "perspective-mismatch",
+  "critical-crisis-alert",
+] as const;
+export type DemoScenarioId = (typeof demoScenarioIdOptions)[number];
+
 export const demoAccounts = {
   patient: {
     username: "patient1",
@@ -110,17 +132,27 @@ export const loginSchema = z.object({
 
 export const loginRequestSchema = loginSchema.extend({
   expectedRole: z.enum(roleOptions).optional(),
+  sessionMode: z.enum(sessionModeOptions).optional(),
 });
 
 export const authUserSchema = z.object({
   id: z.number().int().positive(),
   username: z.string(),
   role: z.enum(roleOptions),
+  isAppAdmin: z.boolean().optional().default(false),
   firstName: z.string().nullable(),
   lastName: z.string().nullable(),
 });
 
 export type AuthUser = z.infer<typeof authUserSchema>;
+
+export const authSessionSchema = z.object({
+  user: authUserSchema,
+  sessionMode: z.enum(sessionModeOptions),
+  sessionToken: z.string().nullable(),
+});
+
+export type AuthSession = z.infer<typeof authSessionSchema>;
 
 const timePattern = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
@@ -366,7 +398,7 @@ export type LocationSnapshot = {
   locationCapturedAt: string;
 };
 
-export const insertObservationSchema = z.object({
+const insertObservationShape = {
   patientId: z.string().trim().min(1, "Patient ID is required"),
   observationType: z.enum(observationTypeOptions),
   observation: z
@@ -380,14 +412,44 @@ export const insertObservationSchema = z.object({
     .trim()
     .min(1, "Support worker name is required")
     .max(100, "Support worker name must be 100 characters or less"),
+  linkedEntityType: z.enum(observationLinkedEntityTypeOptions).optional().nullable(),
+  linkedEntityId: z.number().int().positive().optional().nullable(),
+  systemGenerated: z.boolean().optional().default(false),
+};
+
+export const insertObservationSchema = z.object(insertObservationShape).superRefine((value, ctx) => {
+  const hasLinkedType = value.linkedEntityType != null;
+  const hasLinkedId = value.linkedEntityId != null;
+
+  if (hasLinkedType !== hasLinkedId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Linked entity type and linked entity ID must be provided together",
+      path: ["linkedEntityType"],
+    });
+  }
 });
 
-export const observationSchema = insertObservationSchema.extend({
+export const acknowledgeObservationSchema = z.object({
+  ownershipNote: optionalLongTextSchema,
+});
+
+export const observationSchema = z.object({
+  ...insertObservationShape,
+  linkedEntityType: z.enum(observationLinkedEntityTypeOptions).nullable(),
+  linkedEntityId: z.number().int().positive().nullable(),
+  systemGenerated: z.boolean(),
   id: z.number().int().positive(),
+  status: z.enum(observationStatusOptions),
+  ownershipNote: z.string().nullable(),
+  acknowledgedByUserId: z.number().int().positive().nullable(),
+  acknowledgedByName: z.string().nullable(),
+  acknowledgedAt: z.string().nullable(),
   timestamp: z.string(),
 });
 
 export type InsertObservation = z.infer<typeof insertObservationSchema>;
+export type AcknowledgeObservation = z.infer<typeof acknowledgeObservationSchema>;
 export type ObservationRecord = z.infer<typeof observationSchema>;
 
 export const emotionLogSchema = emotionRecordSchemaBase
@@ -829,6 +891,7 @@ export const createInviteSchema = z.object({
 export const acceptInviteSchema = z.object({
   token: z.string().trim().min(20, "Invite token is required"),
   password: z.string().min(8, "Password must be at least 8 characters"),
+  sessionMode: z.enum(sessionModeOptions).optional(),
 });
 
 export const inviteSchema = z.object({
@@ -874,6 +937,8 @@ export const updateConsentSchema = z.object({
   sleepReports: z.boolean(),
   weeklyScreening: z.boolean(),
   gpsTracking: z.boolean(),
+  acknowledgeStaffedHours: z.boolean(),
+  acknowledgeEmergencyLimits: z.boolean(),
 });
 
 export const consentRecordSchema = updateConsentSchema.extend({
@@ -885,10 +950,59 @@ export const consentRecordSchema = updateConsentSchema.extend({
 export type UpdateConsent = z.infer<typeof updateConsentSchema>;
 export type ConsentRecord = z.infer<typeof consentRecordSchema>;
 
+const pilotMetricRateSchema = z.object({
+  numerator: z.number().int().min(0),
+  denominator: z.number().int().min(0),
+  percent: z.number().min(0).max(100),
+});
+
+export const pilotMetricsSchema = z.object({
+  activationRate: pilotMetricRateSchema,
+  consentComprehensionRate: pilotMetricRateSchema,
+  dailyCheckInCompletionRate: pilotMetricRateSchema,
+  dailyReportCompletionRate: pilotMetricRateSchema,
+  weeklyScreenCompletionRate: pilotMetricRateSchema,
+  clinicallyUsableEntryRate: pilotMetricRateSchema,
+  editRate: pilotMetricRateSchema,
+  suspiciousEditRate: pilotMetricRateSchema,
+  reliabilityFlagRate: pilotMetricRateSchema,
+  missedMedicationDetailCaptureRate: pilotMetricRateSchema,
+  mealsCompletenessRate: pilotMetricRateSchema,
+  consistencyRate: pilotMetricRateSchema,
+  criticalAlertAcknowledgementRate: pilotMetricRateSchema,
+  criticalAlertSlaRate: pilotMetricRateSchema,
+  averageCriticalAlertAcknowledgementMinutes: z.number().nonnegative().nullable(),
+  averageSubmissionToReviewMinutes: z.number().nonnegative().nullable(),
+  lastUpdatedAt: z.string(),
+});
+
+export type PilotMetrics = z.infer<typeof pilotMetricsSchema>;
+
+export const demoScenarioSchema = z.object({
+  id: z.enum(demoScenarioIdOptions),
+  name: z.string(),
+  description: z.string(),
+  focus: z.string(),
+  patientCount: z.number().int().min(1),
+  syntheticOnly: z.literal(true),
+});
+
+export const demoModeStatusSchema = z.object({
+  enabled: z.boolean(),
+  syntheticOnly: z.literal(true),
+  activeScenarioId: z.enum(demoScenarioIdOptions).nullable(),
+  scenarios: z.array(demoScenarioSchema),
+});
+
+export type DemoScenario = z.infer<typeof demoScenarioSchema>;
+export type DemoModeStatus = z.infer<typeof demoModeStatusSchema>;
+
 export const staffSummarySchema = z.object({
   id: z.number().int().positive(),
   username: z.string(),
   role: z.enum(roleOptions),
+  backendRole: z.enum(["doctor", "support_worker"]).optional(),
+  isAppAdmin: z.boolean().optional().default(false),
   firstName: z.string().nullable(),
   lastName: z.string().nullable(),
 });

@@ -1,9 +1,14 @@
 import { useState, type FormEvent } from "react";
 import { KeyRound, ShieldCheck } from "lucide-react";
-import type { AuthUser } from "@shared/contracts";
+import { authSessionSchema, type AuthSession, type AuthUser } from "@shared/contracts";
 import BrandMark from "../components/BrandMark";
 import { useToast } from "../hooks/useToast";
-import { apiRequest, getErrorMessage } from "../lib/api";
+import {
+  apiRequest,
+  getErrorMessage,
+  getPreferredSessionMode,
+  persistAuthSession,
+} from "../lib/api";
 
 type ActivateInvitePageProps = {
   token: string;
@@ -43,20 +48,23 @@ export default function ActivateInvitePage({
     setIsSubmitting(true);
 
     try {
-      const user = await apiRequest<AuthUser>("/api/invites/accept", {
+      const sessionResponse = await apiRequest<AuthSession>("/api/invites/accept", {
         method: "POST",
         data: {
           token,
           password,
+          sessionMode: getPreferredSessionMode(),
         },
       });
+      const session = authSessionSchema.parse(sessionResponse);
 
+      persistAuthSession(session);
       toast({
         title: "Account ready",
         description: "Your invite has been accepted and you are now signed in.",
         variant: "success",
       });
-      onActivated(user);
+      onActivated(session.user);
     } catch (error) {
       toast({
         title: "Could not activate this invite",
