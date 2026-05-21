@@ -7,11 +7,18 @@
     "dev": "concurrently -k \"npm:dev:server\" \"npm:dev:client\"",
     "dev:server": "tsx watch server/index.ts",
     "dev:client": "vite",
+    "mobile:sync": "npm run build:client && npx cap sync",
+    "mobile:sync:android": "npm run build:client && npx cap sync android",
+    "mobile:sync:ios": "npm run build:client && npx cap sync ios",
+    "mobile:open:android": "npx cap open android",
+    "mobile:run:android": "npm run build:client && npx cap run android",
+    "mobile:open:ios": "npx cap open ios",
     "build": "npm run build:client && npm run build:server",
     "build:client": "vite build",
     "build:server": "esbuild server/index.ts --bundle --platform=node --format=esm --outdir=dist/server --packages=external",
     "start": "node dist/server/index.js",
-    "check": "tsc --noEmit && npm run check:triage",
+    "check": "tsc --noEmit && npm run check:triage && npm run check:monitoring",
+    "check:monitoring": "tsx scripts/clinical-regression.ts",
     "check:triage": "tsx scripts/triage-regression.ts",
     "backfill:triage": "tsx scripts/backfill-triage.ts",
     "backup": "node scripts/backup-db.mjs",
@@ -20,10 +27,15 @@
     "release:bundle": "npm run build && node scripts/create-release-bundle.mjs"
   },
   "dependencies": {
+    "@capacitor/app": "^8.1.0",
+    "@capacitor/core": "^8.3.0",
+    "@capacitor/network": "^8.0.1",
+    "@capacitor/preferences": "^8.0.1",
     "bcryptjs": "^3.0.3",
     "date-fns": "^4.1.0",
     "drizzle-orm": "^0.44.0",
     "express": "^4.21.2",
+    "hono": "^4.12.16",
     "lucide-react": "^0.511.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -31,6 +43,9 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@capacitor/android": "^8.3.0",
+    "@capacitor/cli": "^8.3.0",
+    "@capacitor/ios": "^8.3.0",
     "@types/express": "^4.17.21",
     "@types/node": "^24.0.0",
     "@types/react": "^18.3.23",
@@ -43,7 +58,8 @@
     "tailwindcss": "^3.4.17",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3",
-    "vite": "^5.4.19"
+    "vite": "^5.4.19",
+    "wrangler": "^4.87.0"
   },
   "engines": {
     "node": ">=22"
