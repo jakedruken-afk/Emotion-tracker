@@ -1,0 +1,7 @@
+name = "lamb-web"
+pages_build_output_dir = "./dist/client"
+compatibility_date = "2025-10-20"
+
+[[services]]
+binding = "LAMB_BACKEND"
+service = "lamb-backend"
