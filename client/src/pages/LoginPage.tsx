@@ -250,7 +250,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
           )}
         </section>
 
-        <section className="panel workspace-panel order-1 p-3.5 sm:p-5 md:p-10 xl:order-2">
+        <section className="panel workspace-panel login-panel order-1 p-3.5 sm:p-5 md:p-10 xl:order-2">
           <button
             type="button"
             className="btn btn-secondary mb-4 md:mb-6"
