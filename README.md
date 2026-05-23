@@ -35,6 +35,7 @@ engine and it is not a lie detector.
 - Support-worker dashboard with priority queue, trend review, and local care pathways
 - Separate doctor review page with printable visit summary, visit questions, medications, and care plan
 - Invite-only onboarding for private pilots
+- Optional invite email delivery through a verified L.A.M.B. sending domain
 - Server-backed sessions with cookie or header transport for hybrid patient shells
 - Patient-side offline drafts, queued retry, and visible sync status
 - Synthetic demo mode with resettable fake patient scenarios
@@ -125,8 +126,11 @@ Important production settings:
 NODE_ENV=production
 LAMB_PRODUCTION_MODE=true
 SESSION_SECRET=replace-with-a-long-random-secret
-APP_BASE_URL=https://your-domain.example
-VITE_API_BASE_URL=https://your-domain.example
+APP_BASE_URL=https://app.lambpilot.ca
+VITE_API_BASE_URL=https://app.lambpilot.ca
+RESEND_API_KEY=replace-with-resend-api-key
+INVITE_EMAIL_FROM=L.A.M.B. <invites@notify.lambpilot.ca>
+INVITE_EMAIL_REPLY_TO=support@lambpilot.ca
 DATABASE_PATH=/srv/lamb-pilot/shared/data/emotion-tracker.db
 BACKUP_DIR=/srv/lamb-pilot/shared/backups
 ENABLE_DEMO_SEED=false
@@ -139,6 +143,37 @@ Before the first live sign-in, create the first support account:
 ```powershell
 npm run bootstrap:support -- --username pilot-support --first-name Pilot --last-name Lead
 ```
+
+### Invite Email Delivery
+
+Invite links are created by the backend and can be emailed automatically when email delivery is
+configured. The Cloudflare Worker integration uses Resend's Email API.
+
+To send from a L.A.M.B. company address:
+
+1. Use the verified `notify.lambpilot.ca` sending domain in Resend.
+2. Confirm SPF/DKIM verification is still green in Resend.
+3. Set the Worker secret:
+
+```bash
+npx wrangler -c wrangler.worker.toml secret put RESEND_API_KEY
+```
+
+4. Set the non-secret sender values in `wrangler.worker.toml` after the domain is verified:
+
+```toml
+INVITE_EMAIL_FROM = "L.A.M.B. <invites@notify.lambpilot.ca>"
+INVITE_EMAIL_REPLY_TO = "support@lambpilot.ca"
+```
+
+5. Deploy the backend:
+
+```bash
+npx wrangler -c wrangler.worker.toml deploy
+```
+
+If email is not configured or the email provider rejects a send, the invite is still created and the
+admin/support UI will show the activation link so it can be copied manually.
 
 ## GitHub Workflows
 

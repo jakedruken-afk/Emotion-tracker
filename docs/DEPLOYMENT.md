@@ -51,8 +51,11 @@ Set at least these values in `/srv/lamb-pilot/shared/.env`:
 NODE_ENV=production
 LAMB_PRODUCTION_MODE=true
 PORT=3001
-APP_BASE_URL=https://your-domain.example
-VITE_API_BASE_URL=https://your-domain.example
+APP_BASE_URL=https://app.lambpilot.ca
+VITE_API_BASE_URL=https://app.lambpilot.ca
+RESEND_API_KEY=replace-with-resend-api-key
+INVITE_EMAIL_FROM=L.A.M.B. <invites@notify.lambpilot.ca>
+INVITE_EMAIL_REPLY_TO=support@lambpilot.ca
 SESSION_SECRET=replace-with-a-long-random-secret
 DATABASE_PATH=/srv/lamb-pilot/shared/data/emotion-tracker.db
 BACKUP_DIR=/srv/lamb-pilot/shared/backups
@@ -63,6 +66,10 @@ MOBILE_ALLOWED_ORIGINS=capacitor://localhost,ionic://localhost
 
 `MOBILE_ALLOWED_ORIGINS` is used for the patient-first hybrid shell so Capacitor-based builds can
 reach the API with header-based sessions.
+
+`RESEND_API_KEY`, `INVITE_EMAIL_FROM`, and `INVITE_EMAIL_REPLY_TO` enable automatic invite emails.
+For Cloudflare Workers, store `RESEND_API_KEY` as a Wrangler secret and only use a sender address on
+a domain you own and have verified for SPF/DKIM.
 
 ## GitHub Secrets For Deployments
 

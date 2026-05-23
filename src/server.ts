@@ -24,6 +24,9 @@ type Bindings = {
   ADMIN_SETUP_TOKEN?: string;
   APP_BASE_URL?: string;
   INVITE_TTL_HOURS?: string;
+  RESEND_API_KEY?: string;
+  INVITE_EMAIL_FROM?: string;
+  INVITE_EMAIL_REPLY_TO?: string;
 };
 
 type AuthUser = {
@@ -242,6 +245,11 @@ type InviteRow = {
   created_at: string;
   expires_at: string;
   accepted_at: string | null;
+};
+
+type InviteEmailDelivery = {
+  status: "sent" | "skipped" | "failed";
+  message?: string;
 };
 
 type StaffRow = UserRow & {
@@ -681,6 +689,113 @@ function getAppBaseUrl(c: AppContext): string {
 
   const origin = c.req.header("Origin")?.trim().replace(/\/+$/, "");
   return origin || "https://lamb-web.pages.dev";
+}
+
+async function sendInviteEmail(c: AppContext, invite: InviteRow, activationUrl: string): Promise<InviteEmailDelivery> {
+  const apiKey = c.env.RESEND_API_KEY?.trim();
+  const from = c.env.INVITE_EMAIL_FROM?.trim();
+
+  if (!apiKey || !from) {
+    return {
+      status: "skipped",
+      message: "Invite email is not configured. Copy the activation link manually.",
+    };
+  }
+
+  const { firstName } = splitName(invite.name);
+  const greetingName = firstName ?? invite.name ?? "there";
+  const expiresAt = new Date(invite.expires_at).toLocaleString("en-CA", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+  const replyTo = c.env.INVITE_EMAIL_REPLY_TO?.trim();
+  const subject = "Your L.A.M.B. beta invite";
+  const text = [
+    `Hi ${greetingName},`,
+    "",
+    "You have been invited to join the private L.A.M.B. beta.",
+    "Use this secure link to create your password and activate your account:",
+    activationUrl,
+    "",
+    `This invite expires ${expiresAt}.`,
+    "",
+    "If you were not expecting this invite, you can ignore this email.",
+    "",
+    "L.A.M.B.",
+  ].join("\n");
+  const html = `
+    <div style="font-family: Arial, sans-serif; color: #19313a; line-height: 1.55;">
+      <h1 style="font-size: 22px; margin: 0 0 16px;">Your L.A.M.B. beta invite</h1>
+      <p>Hi ${escapeHtml(greetingName)},</p>
+      <p>You have been invited to join the private L.A.M.B. beta.</p>
+      <p>
+        <a href="${escapeHtml(activationUrl)}" style="display: inline-block; background: #1497a3; color: #ffffff; padding: 12px 18px; border-radius: 8px; text-decoration: none; font-weight: 700;">
+          Activate your account
+        </a>
+      </p>
+      <p>If the button does not open, copy and paste this link into your browser:</p>
+      <p style="word-break: break-all;"><a href="${escapeHtml(activationUrl)}">${escapeHtml(activationUrl)}</a></p>
+      <p>This invite expires ${escapeHtml(expiresAt)}.</p>
+      <p>If you were not expecting this invite, you can ignore this email.</p>
+      <p style="margin-top: 24px;">L.A.M.B.</p>
+    </div>
+  `;
+  const body: Record<string, unknown> = {
+    from,
+    to: [invite.email],
+    subject,
+    html,
+    text,
+    tags: [
+      { name: "category", value: "invite" },
+      { name: "invite_id", value: String(invite.id) },
+    ],
+  };
+
+  if (replyTo) {
+    body.reply_to = replyTo;
+  }
+
+  try {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "Idempotency-Key": `lamb-invite-${invite.id}`,
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("Invite email failed", response.status, errorText);
+      return {
+        status: "failed",
+        message: "Invite was created, but the email provider rejected the send. Copy the activation link manually.",
+      };
+    }
+
+    return {
+      status: "sent",
+      message: `Invite email sent to ${invite.email}.`,
+    };
+  } catch (error) {
+    console.error("Invite email failed", error);
+    return {
+      status: "failed",
+      message: "Invite was created, but the email provider could not be reached. Copy the activation link manually.",
+    };
+  }
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
 
 function normalizeInviteRole(value: unknown): UserRole {
@@ -1322,7 +1437,9 @@ api.post("/invites", requireRole("doctor", "support_worker"), async (c) => {
     }
 
     await auditLog(c, c.var.user.id, null, "invite.created");
-    return c.json(toInviteResponse(invite, `${getAppBaseUrl(c)}/activate/${rawToken}`), 201);
+    const activationUrl = `${getAppBaseUrl(c)}/activate/${rawToken}`;
+    const emailDelivery = await sendInviteEmail(c, invite, activationUrl);
+    return c.json(toInviteResponse(invite, activationUrl, emailDelivery), 201);
   });
 });
 
@@ -2644,7 +2761,7 @@ function toStaffSummary(row: StaffRow) {
   };
 }
 
-function toInviteResponse(invite: InviteRow, activationUrl?: string) {
+function toInviteResponse(invite: InviteRow, activationUrl?: string, emailDelivery?: InviteEmailDelivery) {
   const { firstName, lastName } = splitName(invite.name);
   return {
     id: invite.id,
@@ -2662,6 +2779,7 @@ function toInviteResponse(invite: InviteRow, activationUrl?: string) {
     expiresAt: invite.expires_at,
     acceptedAt: invite.accepted_at,
     ...(activationUrl ? { activationUrl } : {}),
+    ...(emailDelivery ? { emailDelivery } : {}),
   };
 }
 

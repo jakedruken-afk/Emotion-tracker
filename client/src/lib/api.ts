@@ -1,4 +1,3 @@
-import { Capacitor } from "@capacitor/core";
 import type { AuthSession, SessionMode } from "@shared/contracts";
 
 type ApiRequestOptions = {
@@ -8,19 +7,33 @@ type ApiRequestOptions = {
 
 const clientSessionModeKey = "lamb_session_mode";
 const clientSessionTokenKey = "lamb_session_token";
-const cloudflareApiBaseUrl = "https://lamb-web.pages.dev";
+const cloudflareApiBaseUrl = "https://app.lambpilot.ca";
 const apiRequestTimeoutMs = 10_000;
+
+type CapacitorRuntime = {
+  getPlatform?: () => string;
+  isNativePlatform?: () => boolean;
+};
+
+function getCapacitorRuntime(): CapacitorRuntime | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  return ((window as Window & { Capacitor?: CapacitorRuntime }).Capacitor ?? null);
+}
 
 function isNativeRuntime() {
   if (typeof window === "undefined") {
     return false;
   }
 
+  const capacitor = getCapacitorRuntime();
   const isCapacitorLocalHost =
     window.location.hostname === "localhost" && window.location.protocol === "https:";
 
   return (
-    Capacitor.isNativePlatform() ||
+    capacitor?.isNativePlatform?.() === true ||
     window.location.protocol === "capacitor:" ||
     window.location.protocol === "ionic:" ||
     isCapacitorLocalHost
@@ -40,9 +53,9 @@ function getConfiguredApiBaseUrl() {
     return "";
   }
 
-  const platform = Capacitor.getPlatform();
+  const platform = getCapacitorRuntime()?.getPlatform?.();
 
-  if (platform === "android") {
+  if (platform === "android" || (!platform && /Android/i.test(window.navigator.userAgent))) {
     return "http://10.0.2.2:3001";
   }
 

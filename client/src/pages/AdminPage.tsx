@@ -182,8 +182,9 @@ export default function AdminPage({ user, onLogout }: AdminPageProps) {
         supportWorkerId: current.supportWorkerId,
       }));
       toast({
-        title: "Patient invite created",
-        description: "Copy the private activation link and send it securely.",
+        title: invite.emailDelivery?.status === "sent" ? "Patient invite emailed" : "Patient invite created",
+        description:
+          invite.emailDelivery?.message ?? "Copy the private activation link and send it securely.",
         variant: "success",
       });
       await loadAdmin();

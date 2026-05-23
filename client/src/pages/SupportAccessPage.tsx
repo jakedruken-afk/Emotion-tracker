@@ -154,8 +154,9 @@ export default function SupportAccessPage({
       setLatestInviteUrl(invite.activationUrl);
       setInviteForm(createEmptyInviteForm(user.id));
       toast({
-        title: "Invite created",
-        description: "Copy the activation link and send it to the person you invited.",
+        title: invite.emailDelivery?.status === "sent" ? "Invite emailed" : "Invite created",
+        description:
+          invite.emailDelivery?.message ?? "Copy the activation link and send it to the person you invited.",
         variant: "success",
       });
       await loadAccessData();

@@ -9,6 +9,8 @@ database_name = "lamb_db"
 database_id = "2686e687-25dd-4875-b3b7-8cbf4a18b3d5"
 
 [vars]
-CORS_ORIGIN = "capacitor://localhost,ionic://localhost,http://localhost:5173,https://localhost,https://lamb-web.pages.dev,https://*.lamb-web.pages.dev"
-APP_BASE_URL = "https://lamb-web.pages.dev"
+CORS_ORIGIN = "capacitor://localhost,ionic://localhost,http://localhost:5173,https://localhost,https://lamb-web.pages.dev,https://*.lamb-web.pages.dev,https://app.lambpilot.ca"
+APP_BASE_URL = "https://app.lambpilot.ca"
 INVITE_TTL_HOURS = "168"
+INVITE_EMAIL_FROM = "L.A.M.B. <invites@notify.lambpilot.ca>"
+INVITE_EMAIL_REPLY_TO = "support@lambpilot.ca"

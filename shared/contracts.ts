@@ -909,6 +909,12 @@ export const inviteSchema = z.object({
 
 export const inviteCreateResponseSchema = inviteSchema.extend({
   activationUrl: z.string().url(),
+  emailDelivery: z
+    .object({
+      status: z.enum(["sent", "skipped", "failed"]),
+      message: z.string().optional(),
+    })
+    .optional(),
 });
 
 export type CreateInvite = z.infer<typeof createInviteSchema>;
