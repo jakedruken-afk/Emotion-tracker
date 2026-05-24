@@ -1,5 +1,6 @@
 import {
   getCheckInRichness,
+  isMissedMedicationAdherence,
   type MedicationAdherence,
   type MissedMedicationReason,
   pilotMetricsSchema,
@@ -243,8 +244,8 @@ export function buildPilotMetrics(): PilotMetrics {
     dailyReports.filter((row) => String(row.reliabilityLevel ?? "High") !== "High").length +
     weeklyScreenings.filter((row) => String(row.reliabilityLevel ?? "High") !== "High").length;
 
-  const missedMedicationEntries = emotions.filter(
-    (row) => String(row.medicationAdherence ?? "") === "missed_some",
+  const missedMedicationEntries = emotions.filter((row) =>
+    isMissedMedicationAdherence(normalizeMedicationAdherence(row.medicationAdherence)),
   );
   const missedMedicationDetailEntries = missedMedicationEntries.filter(
     (row) =>

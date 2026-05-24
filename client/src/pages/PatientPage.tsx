@@ -28,6 +28,7 @@ import {
 import {
   emotionOptions,
   formatDisplayName,
+  isMissedMedicationAdherence,
   medicationAdherenceLabels,
   medicationAdherenceOptions,
   missedMedicationReasonLabels,
@@ -943,19 +944,30 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
     setWeeklyScreening(createEmptyWeeklyScreening());
   };
 
+  const handleMedicationAdherenceChange = (nextValue: MedicationAdherence) => {
+    setMedicationAdherence(nextValue);
+
+    if (!isMissedMedicationAdherence(nextValue)) {
+      setMissedMedicationName("");
+      setMissedMedicationReason("");
+    }
+  };
+
   const handleSubmit = async () => {
     if (!selectedEmotion) {
       return;
     }
 
+    const missedMedicationSelected = isMissedMedicationAdherence(medicationAdherence);
+
     if (
-      medicationAdherence === "missed_some" &&
+      missedMedicationSelected &&
       (missedMedicationName.trim().length === 0 || missedMedicationReason === "")
     ) {
       toast({
         title: "Add the missed medication details",
         description:
-          "When you choose 'Missed some', please tell us which medication was missed and why.",
+          "When medication was missed, please tell us which medication(s) and why.",
         variant: "info",
       });
       return;
@@ -999,10 +1011,8 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
         substanceUseToday,
         moneyChangedToday,
         medicationAdherence,
-        missedMedicationName:
-          medicationAdherence === "missed_some" ? missedMedicationName : null,
-        missedMedicationReason:
-          medicationAdherence === "missed_some" ? missedMedicationReason || null : null,
+        missedMedicationName: missedMedicationSelected ? missedMedicationName : null,
+        missedMedicationReason: missedMedicationSelected ? missedMedicationReason || null : null,
         ...locationPayload,
       };
       const submissionResult = await submitPatientRequest<EmotionRecord>({
@@ -1010,7 +1020,10 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
         url,
         method,
         data: payload,
-        crisisLevelHint: getClientCrisisLevelHint(notes, missedMedicationName),
+        crisisLevelHint: getClientCrisisLevelHint(
+          notes,
+          missedMedicationSelected ? missedMedicationName : "",
+        ),
       });
 
       const wasEditing = editingEmotionId != null;
@@ -1730,7 +1743,7 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
                   onCravingLevelChange={setCravingLevel}
                   onSubstanceUseTodayChange={setSubstanceUseToday}
                   onMoneyChangedTodayChange={setMoneyChangedToday}
-                  onMedicationAdherenceChange={setMedicationAdherence}
+                  onMedicationAdherenceChange={handleMedicationAdherenceChange}
                   onMissedMedicationNameChange={setMissedMedicationName}
                   onMissedMedicationReasonChange={setMissedMedicationReason}
                   onIncludeLocationChange={setIncludeLocation}

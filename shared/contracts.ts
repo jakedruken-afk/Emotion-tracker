@@ -61,6 +61,12 @@ export const medicationAdherenceLabels: Record<MedicationAdherence, string> = {
   missed_all: "Missed all",
 };
 
+export function isMissedMedicationAdherence(
+  value: MedicationAdherence | null | undefined,
+) {
+  return value === "missed_some" || value === "missed_all";
+}
+
 export const missedMedicationReasonOptions = [
   "forgot",
   "side_effects",
@@ -304,14 +310,14 @@ function validateEmotionMedication(
   value: z.infer<typeof emotionInsertSchemaBase> | z.infer<typeof updateEmotionSchemaBase>,
   ctx: z.RefinementCtx,
 ) {
-  if (value.medicationAdherence !== "missed_some") {
+  if (!isMissedMedicationAdherence(value.medicationAdherence)) {
     return;
   }
 
   if (value.missedMedicationName == null) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      message: "Tell us which medication doses were missed",
+      message: "Tell us which medication(s) were missed",
       path: ["missedMedicationName"],
     });
   }
@@ -319,7 +325,7 @@ function validateEmotionMedication(
   if (value.missedMedicationReason == null) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      message: "Tell us why some medication doses were missed",
+      message: "Tell us why medication was missed",
       path: ["missedMedicationReason"],
     });
   }

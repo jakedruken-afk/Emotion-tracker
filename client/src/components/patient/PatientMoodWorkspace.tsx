@@ -1,5 +1,6 @@
 import { BookHeart, Clock3, ShieldCheck, Sparkles } from "lucide-react";
 import {
+  isMissedMedicationAdherence,
   type DailyReportRecord,
   type EmotionName,
   type EmotionRecord,
@@ -127,6 +128,8 @@ export default function PatientMoodWorkspace({
   onSubmit,
   onReset,
 }: MoodWorkspaceProps) {
+  const shouldAskMissedMedication = isMissedMedicationAdherence(medicationAdherence);
+
   return (
     <div className="content-grid">
       <section className="surface-panel">
@@ -226,23 +229,25 @@ export default function PatientMoodWorkspace({
                   </select>
                 </Field>
 
-                {medicationAdherence === "missed_some" ? (
+                {shouldAskMissedMedication ? (
                   <>
                     <Field
-                      label="Which medication was missed?"
+                      label="Which medication(s) did you miss?"
                       htmlFor="missed-medication-name"
+                      caption="List one or more medication names."
                     >
                       <input
                         id="missed-medication-name"
                         className="input"
+                        maxLength={200}
                         value={missedMedicationName}
                         onChange={(event) => onMissedMedicationNameChange(event.target.value)}
-                        placeholder="Medication name"
+                        placeholder="Medication name(s)"
                       />
                     </Field>
 
                     <Field
-                      label="Why were some doses missed?"
+                      label="Why was medication missed?"
                       htmlFor="missed-medication-reason"
                     >
                       <select

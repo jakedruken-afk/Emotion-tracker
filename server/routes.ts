@@ -26,6 +26,7 @@ import {
   insertWeeklyScreeningSchema,
   inviteCreateResponseSchema,
   inviteSchema,
+  isMissedMedicationAdherence,
   loginRequestSchema,
   medicationSchema,
   observationSchema,
@@ -42,6 +43,8 @@ import {
   weeklyScreeningSchema,
   type AuthUser,
   formatDisplayName,
+  type InsertEmotion,
+  type UpdateEmotion,
 } from "../shared/contracts";
 import {
   SYSTEM_ALERT_AUTHOR,
@@ -159,6 +162,20 @@ function getEmotionTextInputs(record: Pick<
   "notes" | "missedMedicationName"
 >) {
   return [record.notes, record.missedMedicationName];
+}
+
+function normalizeEmotionMedicationDetails(record: InsertEmotion): InsertEmotion;
+function normalizeEmotionMedicationDetails(record: UpdateEmotion): UpdateEmotion;
+function normalizeEmotionMedicationDetails(record: InsertEmotion | UpdateEmotion) {
+  if (isMissedMedicationAdherence(record.medicationAdherence)) {
+    return record;
+  }
+
+  return {
+    ...record,
+    missedMedicationName: null,
+    missedMedicationReason: null,
+  };
 }
 
 function getDailyReportTextInputs(record: Pick<
@@ -495,7 +512,7 @@ export function registerRoutes(app: Express) {
 
   app.post("/api/emotions", requireRole("patient"), async (req, res) => {
     try {
-      const emotion = insertEmotionSchema.parse(req.body);
+      const emotion = normalizeEmotionMedicationDetails(insertEmotionSchema.parse(req.body));
       const user = getRequestUser(req);
 
       if (emotion.patientId !== user.username) {
@@ -594,7 +611,7 @@ export function registerRoutes(app: Express) {
         return;
       }
 
-      const emotion = updateEmotionSchema.parse(req.body);
+      const emotion = normalizeEmotionMedicationDetails(updateEmotionSchema.parse(req.body));
       const includesLocation =
         emotion.latitude != null ||
         emotion.longitude != null ||
