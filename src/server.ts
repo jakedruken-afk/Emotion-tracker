@@ -91,6 +91,9 @@ type PatientRow = {
   last_visit_at: string | null;
   created_at: string;
   updated_at: string;
+  patient_email?: string;
+  patient_name?: string;
+  patient_code?: string | null;
 };
 
 type PatientListRow = PatientRow & {
@@ -109,6 +112,21 @@ type LogRow = {
   value: string;
   note: string | null;
   created_at: string;
+};
+
+type EntryRevisionRow = {
+  id: number;
+  log_id: number;
+  old_value: string;
+  new_value: string;
+  edited_by_user_id: number;
+  edited_at: string;
+  patient_id: number;
+  type: LogType;
+  actor_email: string;
+  actor_name: string;
+  actor_role: UserRole;
+  actor_patient_code: string | null;
 };
 
 type DailyReportRow = {
@@ -132,6 +150,8 @@ type DailyReportRow = {
   crisis_summary: string | null;
   legacy_log_id: number | null;
   created_at: string;
+  patient_code?: string | null;
+  patient_email?: string;
 };
 
 type WeeklyScreeningRow = {
@@ -171,6 +191,8 @@ type WeeklyScreeningRow = {
   crisis_summary: string | null;
   legacy_log_id: number | null;
   created_at: string;
+  patient_code?: string | null;
+  patient_email?: string;
 };
 
 type ObservationRow = {
@@ -190,6 +212,8 @@ type ObservationRow = {
   acknowledged_by_name: string | null;
   acknowledged_at: string | null;
   created_at: string;
+  patient_code?: string | null;
+  patient_email?: string;
 };
 
 type MedicationRow = {
@@ -207,6 +231,8 @@ type MedicationRow = {
   updated_by: string | null;
   created_at: string;
   updated_at: string | null;
+  patient_code?: string | null;
+  patient_email?: string;
 };
 
 type CarePlanRow = {
@@ -221,6 +247,8 @@ type CarePlanRow = {
   updated_by: string;
   created_at: string;
   updated_at: string;
+  patient_code?: string | null;
+  patient_email?: string;
 };
 
 type RiskScoreRow = {
@@ -417,6 +445,19 @@ function toPublicUser(user: UserRow): PublicUser {
 
 function toClientRole(role: UserRole): ClientRole {
   return role === "patient" ? "patient" : "support";
+}
+
+function publicPatientId(patient: PatientRow): string {
+  return patient.patient_code ?? patient.patient_email ?? String(patient.id);
+}
+
+function publicPatientIdFromScopedRow(row: {
+  patient_id: number;
+  client_patient_id?: string | null;
+  patient_code?: string | null;
+  patient_email?: string;
+}): string {
+  return row.client_patient_id ?? row.patient_code ?? row.patient_email ?? String(row.patient_id);
 }
 
 function splitName(name: string): { firstName: string | null; lastName: string | null } {
@@ -870,11 +911,33 @@ function requireAppAdmin() {
 }
 
 async function getPatient(c: AppContext, patientId: number): Promise<PatientRow | null> {
-  return c.env.DB.prepare("SELECT * FROM patients WHERE id = ?").bind(patientId).first<PatientRow>();
+  return c.env.DB.prepare(
+    `SELECT
+       patients.*,
+       users.email AS patient_email,
+       users.name AS patient_name,
+       users.patient_code AS patient_code
+     FROM patients
+     INNER JOIN users ON users.id = patients.user_id
+     WHERE patients.id = ?`
+  )
+    .bind(patientId)
+    .first<PatientRow>();
 }
 
 async function getPatientForUser(c: AppContext, userId: number): Promise<PatientRow | null> {
-  return c.env.DB.prepare("SELECT * FROM patients WHERE user_id = ?").bind(userId).first<PatientRow>();
+  return c.env.DB.prepare(
+    `SELECT
+       patients.*,
+       users.email AS patient_email,
+       users.name AS patient_name,
+       users.patient_code AS patient_code
+     FROM patients
+     INNER JOIN users ON users.id = patients.user_id
+     WHERE patients.user_id = ?`
+  )
+    .bind(userId)
+    .first<PatientRow>();
 }
 
 async function requirePatientAccess(c: AppContext, patientId: number): Promise<PatientRow> {
@@ -1325,6 +1388,35 @@ api.patch("/admin/users/:id", requireAppAdmin(), async (c) => {
   });
 });
 
+api.patch("/admin/users/:id/password", requireAppAdmin(), async (c) => {
+  return handleRoute(c, async () => {
+    const userId = requireInteger(c.req.param("id"), "id");
+    const body = await readJsonObject(c);
+    const password = requireString(body.password, "password");
+
+    if (password.length < 8) {
+      throw new HttpError(400, "password must be at least 8 characters");
+    }
+
+    const hashedPassword = await hashPassword(password, c.env.BCRYPT_SALT);
+    const user = await c.env.DB.prepare(
+      `UPDATE users
+       SET hashed_password = ?, updated_at = datetime('now')
+       WHERE id = ?
+       RETURNING id, email, hashed_password, name, role, patient_code, is_active, created_at, updated_at`
+    )
+      .bind(hashedPassword, userId)
+      .first<UserRow>();
+
+    if (!user) {
+      throw new HttpError(404, "User not found");
+    }
+
+    await auditLog(c, c.var.user.id, null, "admin.user.password_reset");
+    return c.json({ user: toPublicUser(user) });
+  });
+});
+
 api.get("/staff", requireRole("doctor", "support_worker"), async (c) => {
   return handleRoute(c, async () => {
     const rows = await c.env.DB.prepare(
@@ -1440,6 +1532,61 @@ api.post("/invites", requireRole("doctor", "support_worker"), async (c) => {
     const activationUrl = `${getAppBaseUrl(c)}/activate/${rawToken}`;
     const emailDelivery = await sendInviteEmail(c, invite, activationUrl);
     return c.json(toInviteResponse(invite, activationUrl, emailDelivery), 201);
+  });
+});
+
+api.post("/invites/:id/resend", requireRole("doctor", "support_worker"), async (c) => {
+  return handleRoute(c, async () => {
+    const inviteId = requireInteger(c.req.param("id"), "id");
+    const existing = await c.env.DB.prepare("SELECT * FROM invites WHERE id = ?")
+      .bind(inviteId)
+      .first<InviteRow>();
+
+    if (!existing) {
+      throw new HttpError(404, "Invite not found");
+    }
+
+    const canManageInvite =
+      c.var.user.isAppAdmin ||
+      existing.created_by_user_id === c.var.user.id ||
+      existing.doctor_id === c.var.user.id ||
+      existing.support_worker_id === c.var.user.id;
+
+    if (!canManageInvite) {
+      throw new HttpError(403, "Forbidden");
+    }
+
+    if (existing.accepted_at) {
+      throw new HttpError(409, "This invite has already been accepted");
+    }
+
+    const registeredUser = await c.env.DB.prepare("SELECT id FROM users WHERE email = ?")
+      .bind(existing.email)
+      .first<{ id: number }>();
+    if (registeredUser) {
+      throw new HttpError(409, "A user already exists for this invite email");
+    }
+
+    const rawToken = generateInviteToken();
+    const expiresAt = new Date(Date.now() + getInviteTtlHours(c) * 60 * 60 * 1000).toISOString();
+    const invite = await c.env.DB.prepare(
+      `UPDATE invites
+       SET token_hash = ?,
+           expires_at = ?
+       WHERE id = ?
+       RETURNING *`
+    )
+      .bind(await hashInviteToken(rawToken), expiresAt, existing.id)
+      .first<InviteRow>();
+
+    if (!invite) {
+      throw new HttpError(500, "Could not refresh invite");
+    }
+
+    const activationUrl = `${getAppBaseUrl(c)}/activate/${rawToken}`;
+    const emailDelivery = await sendInviteEmail(c, invite, activationUrl);
+    await auditLog(c, c.var.user.id, null, "invite.resent");
+    return c.json(toInviteResponse(invite, activationUrl, emailDelivery));
   });
 });
 
@@ -1714,7 +1861,14 @@ api.patch("/observations/:id/acknowledge", requireRole("doctor", "support_worker
     return c.json(observationRowToRecord(observation));
   });
 });
-api.get("/entry-revisions/:patientId", requireRole("doctor", "support_worker"), async (c) => c.json([]));
+api.get("/entry-revisions/:patientId", requireRole("doctor", "support_worker"), async (c) => {
+  return handleRoute(c, async () => {
+    const patient = await resolveAccessiblePatient(c, requireString(c.req.param("patientId"), "patientId"));
+    const revisions = await listEntryRevisions(c, patient);
+    await auditLog(c, c.var.user.id, patient.id, "entry_revision.list.view");
+    return c.json(revisions.map((revision) => entryRevisionRowToRecord(revision, patient)));
+  });
+});
 api.get("/medications", requireRole("doctor", "support_worker"), async (c) => {
   return handleRoute(c, async () => {
     const medications = await listMedicationsForClinician(c);
@@ -1773,7 +1927,13 @@ api.patch("/care-plan/:patientId", requireRole("doctor", "support_worker"), asyn
     return c.json(carePlanRowToRecord(carePlan));
   });
 });
-api.get("/pilot-metrics", requireRole("doctor", "support_worker"), async (c) => c.json(emptyPilotMetrics()));
+api.get("/pilot-metrics", requireRole("doctor", "support_worker"), async (c) => {
+  return handleRoute(c, async () => {
+    const metrics = await calculatePilotMetrics(c);
+    await auditLog(c, c.var.user.id, null, "pilot_metrics.view");
+    return c.json(metrics);
+  });
+});
 api.get("/demo-mode", requireRole("doctor", "support_worker"), async (c) =>
   c.json({ enabled: false, syntheticOnly: true, activeScenarioId: null, scenarios: [] })
 );
@@ -1815,24 +1975,28 @@ api.post("/logs", async (c) => {
       throw new HttpError(400, "Invalid log type");
     }
 
-    await assertCanCreateLog(c, patientId, source);
+    const patient = await assertCanCreateLog(c, patientId, source);
     validateStructuredLog(type, body.value);
+    const storedValue =
+      isJsonObject(body.value) && typeof body.value.patientId !== "string"
+        ? { ...body.value, patientId: publicPatientId(patient) }
+        : body.value;
 
     const insertedLog = await c.env.DB.prepare(
       `INSERT INTO logs (patient_id, source, type, value, note, created_at)
        VALUES (?, ?, ?, ?, ?, datetime('now'))
        RETURNING *`
     )
-      .bind(patientId, source, type, jsonValue(body.value), optionalString(body.note))
+      .bind(patientId, source, type, jsonValue(storedValue), optionalString(body.note))
       .first<LogRow>();
 
     if (!insertedLog) {
       throw new HttpError(500, "Could not create log");
     }
 
-    await insertStructuredLog(c, insertedLog, body.value);
+    await insertStructuredLog(c, insertedLog, storedValue);
     await checkForMismatch(c, insertedLog);
-    await checkForCrisisLanguage(c, patientId, body.value, optionalString(body.note));
+    await checkForCrisisLanguage(c, patientId, storedValue, optionalString(body.note));
     await auditLog(c, c.var.user.id, patientId, "create_log");
 
     return c.json({ log: serializeLog(insertedLog) }, 201);
@@ -1869,9 +2033,15 @@ api.patch("/logs/:id", async (c) => {
       throw new HttpError(403, "Forbidden");
     }
 
-    const nextValue = body.value === undefined ? existing.value : jsonValue(body.value);
+    const requestedValue =
+      body.value === undefined
+        ? parseStoredJson(existing.value)
+        : isJsonObject(body.value) && typeof body.value.patientId !== "string"
+          ? { ...body.value, patientId: publicPatientId(patient) }
+          : body.value;
+    const nextValue = jsonValue(requestedValue);
     const nextNote = body.note === undefined ? existing.note : optionalString(body.note);
-    validateStructuredLog(existing.type, parseStoredJson(nextValue));
+    validateStructuredLog(existing.type, requestedValue);
 
     await c.env.DB.prepare(
       `UPDATE logs
@@ -1976,7 +2146,11 @@ async function resolveAccessiblePatient(c: AppContext, identifier: string): Prom
 
   if (!patient) {
     patient = await c.env.DB.prepare(
-      `SELECT patients.*
+      `SELECT
+         patients.*,
+         users.email AS patient_email,
+         users.name AS patient_name,
+         users.patient_code AS patient_code
        FROM patients
        INNER JOIN users ON users.id = patients.user_id
        WHERE users.patient_code = ? OR lower(users.email) = lower(?)
@@ -2009,10 +2183,15 @@ async function logsByType(c: AppContext, patientId: number, type: LogType): Prom
 
 async function dailyReportsByPatient(c: AppContext, patientId: number): Promise<DailyReportRow[]> {
   const rows = await c.env.DB.prepare(
-    `SELECT *
+    `SELECT
+       daily_reports.*,
+       users.patient_code AS patient_code,
+       users.email AS patient_email
      FROM daily_reports
+     INNER JOIN patients ON patients.id = daily_reports.patient_id
+     INNER JOIN users ON users.id = patients.user_id
      WHERE patient_id = ?
-     ORDER BY datetime(created_at) DESC, id DESC
+     ORDER BY datetime(daily_reports.created_at) DESC, daily_reports.id DESC
      LIMIT 100`
   )
     .bind(patientId)
@@ -2023,10 +2202,15 @@ async function dailyReportsByPatient(c: AppContext, patientId: number): Promise<
 
 async function weeklyScreeningsByPatient(c: AppContext, patientId: number): Promise<WeeklyScreeningRow[]> {
   const rows = await c.env.DB.prepare(
-    `SELECT *
+    `SELECT
+       weekly_screenings.*,
+       users.patient_code AS patient_code,
+       users.email AS patient_email
      FROM weekly_screenings
+     INNER JOIN patients ON patients.id = weekly_screenings.patient_id
+     INNER JOIN users ON users.id = patients.user_id
      WHERE patient_id = ?
-     ORDER BY datetime(created_at) DESC, id DESC
+     ORDER BY datetime(weekly_screenings.created_at) DESC, weekly_screenings.id DESC
      LIMIT 100`
   )
     .bind(patientId)
@@ -2038,9 +2222,13 @@ async function weeklyScreeningsByPatient(c: AppContext, patientId: number): Prom
 async function listDailyReportsForClinician(c: AppContext): Promise<DailyReportRow[]> {
   const whereClause = c.var.user.isAppAdmin ? "" : "WHERE patients.doctor_id = ? OR patients.support_worker_id = ?";
   const stmt = c.env.DB.prepare(
-    `SELECT daily_reports.*
+    `SELECT
+       daily_reports.*,
+       users.patient_code AS patient_code,
+       users.email AS patient_email
      FROM daily_reports
      INNER JOIN patients ON patients.id = daily_reports.patient_id
+     INNER JOIN users ON users.id = patients.user_id
      ${whereClause}
      ORDER BY datetime(daily_reports.created_at) DESC, daily_reports.id DESC
      LIMIT 200`
@@ -2055,9 +2243,13 @@ async function listDailyReportsForClinician(c: AppContext): Promise<DailyReportR
 async function listWeeklyScreeningsForClinician(c: AppContext): Promise<WeeklyScreeningRow[]> {
   const whereClause = c.var.user.isAppAdmin ? "" : "WHERE patients.doctor_id = ? OR patients.support_worker_id = ?";
   const stmt = c.env.DB.prepare(
-    `SELECT weekly_screenings.*
+    `SELECT
+       weekly_screenings.*,
+       users.patient_code AS patient_code,
+       users.email AS patient_email
      FROM weekly_screenings
      INNER JOIN patients ON patients.id = weekly_screenings.patient_id
+     INNER JOIN users ON users.id = patients.user_id
      ${whereClause}
      ORDER BY datetime(weekly_screenings.created_at) DESC, weekly_screenings.id DESC
      LIMIT 200`
@@ -2306,12 +2498,41 @@ async function updateWeeklyScreening(c: AppContext, screeningId: number, body: J
   return updated;
 }
 
+async function listEntryRevisions(c: AppContext, patient: PatientRow): Promise<EntryRevisionRow[]> {
+  const rows = await c.env.DB.prepare(
+    `SELECT
+       log_edits.*,
+       logs.patient_id AS patient_id,
+       logs.type AS type,
+       users.email AS actor_email,
+       users.name AS actor_name,
+       users.role AS actor_role,
+       users.patient_code AS actor_patient_code
+     FROM log_edits
+     INNER JOIN logs ON logs.id = log_edits.log_id
+     INNER JOIN users ON users.id = log_edits.edited_by_user_id
+     WHERE logs.patient_id = ?
+       AND logs.type IN ('mood', 'sleep', 'weekly_check')
+     ORDER BY datetime(log_edits.edited_at) DESC, log_edits.id DESC
+     LIMIT 100`
+  )
+    .bind(patient.id)
+    .all<EntryRevisionRow>();
+
+  return rows.results ?? [];
+}
+
 async function observationsByPatient(c: AppContext, patientId: number): Promise<ObservationRow[]> {
   const rows = await c.env.DB.prepare(
-    `SELECT *
+    `SELECT
+       observations.*,
+       users.patient_code AS patient_code,
+       users.email AS patient_email
      FROM observations
+     INNER JOIN patients ON patients.id = observations.patient_id
+     INNER JOIN users ON users.id = patients.user_id
      WHERE patient_id = ?
-     ORDER BY datetime(created_at) DESC, id DESC
+     ORDER BY datetime(observations.created_at) DESC, observations.id DESC
      LIMIT 100`
   )
     .bind(patientId)
@@ -2323,9 +2544,13 @@ async function observationsByPatient(c: AppContext, patientId: number): Promise<
 async function listObservationsForClinician(c: AppContext): Promise<ObservationRow[]> {
   const whereClause = c.var.user.isAppAdmin ? "" : "WHERE patients.doctor_id = ? OR patients.support_worker_id = ?";
   const stmt = c.env.DB.prepare(
-    `SELECT observations.*
+    `SELECT
+       observations.*,
+       users.patient_code AS patient_code,
+       users.email AS patient_email
      FROM observations
      INNER JOIN patients ON patients.id = observations.patient_id
+     INNER JOIN users ON users.id = patients.user_id
      ${whereClause}
      ORDER BY datetime(observations.created_at) DESC, observations.id DESC
      LIMIT 200`
@@ -2476,10 +2701,15 @@ async function acknowledgeObservation(c: AppContext, observationId: number, body
 
 async function medicationsByPatient(c: AppContext, patientId: number): Promise<MedicationRow[]> {
   const rows = await c.env.DB.prepare(
-    `SELECT *
+    `SELECT
+       medications.*,
+       users.patient_code AS patient_code,
+       users.email AS patient_email
      FROM medications
+     INNER JOIN patients ON patients.id = medications.patient_id
+     INNER JOIN users ON users.id = patients.user_id
      WHERE patient_id = ?
-     ORDER BY COALESCE(is_active, 1) DESC, datetime(COALESCE(updated_at, created_at)) DESC, id DESC`
+     ORDER BY COALESCE(medications.is_active, 1) DESC, datetime(COALESCE(medications.updated_at, medications.created_at)) DESC, medications.id DESC`
   )
     .bind(patientId)
     .all<MedicationRow>();
@@ -2490,9 +2720,13 @@ async function medicationsByPatient(c: AppContext, patientId: number): Promise<M
 async function listMedicationsForClinician(c: AppContext): Promise<MedicationRow[]> {
   const whereClause = c.var.user.isAppAdmin ? "" : "WHERE patients.doctor_id = ? OR patients.support_worker_id = ?";
   const stmt = c.env.DB.prepare(
-    `SELECT medications.*
+    `SELECT
+       medications.*,
+       users.patient_code AS patient_code,
+       users.email AS patient_email
      FROM medications
      INNER JOIN patients ON patients.id = medications.patient_id
+     INNER JOIN users ON users.id = patients.user_id
      ${whereClause}
      ORDER BY medications.patient_id ASC, COALESCE(medications.is_active, 1) DESC, datetime(COALESCE(medications.updated_at, medications.created_at)) DESC`
   );
@@ -2581,7 +2815,18 @@ async function updateMedication(c: AppContext, medicationId: number, body: JsonO
 }
 
 async function getCarePlanByPatientId(c: AppContext, patientId: number): Promise<CarePlanRow | null> {
-  return c.env.DB.prepare("SELECT * FROM care_plans WHERE patient_id = ?").bind(patientId).first<CarePlanRow>();
+  return c.env.DB.prepare(
+    `SELECT
+       care_plans.*,
+       users.patient_code AS patient_code,
+       users.email AS patient_email
+     FROM care_plans
+     INNER JOIN patients ON patients.id = care_plans.patient_id
+     INNER JOIN users ON users.id = patients.user_id
+     WHERE care_plans.patient_id = ?`
+  )
+    .bind(patientId)
+    .first<CarePlanRow>();
 }
 
 async function insertCarePlan(c: AppContext, patient: PatientRow, body: JsonObject): Promise<CarePlanRow> {
@@ -2659,20 +2904,24 @@ async function insertCompatibilityLog(
   value: unknown,
   note: string | null
 ): Promise<LogRow> {
-  await assertCanCreateLog(c, patientId, source);
+  const patient = await assertCanCreateLog(c, patientId, source);
+  const storedValue =
+    isJsonObject(value) && typeof value.patientId !== "string"
+      ? { ...value, patientId: publicPatientId(patient) }
+      : value;
   const insertedLog = await c.env.DB.prepare(
     `INSERT INTO logs (patient_id, source, type, value, note, created_at)
      VALUES (?, ?, ?, ?, ?, datetime('now'))
      RETURNING *`
   )
-    .bind(patientId, source, type, jsonValue(value), note)
+    .bind(patientId, source, type, jsonValue(storedValue), note)
     .first<LogRow>();
 
   if (!insertedLog) {
     throw new HttpError(500, "Could not create log");
   }
 
-  await checkForCrisisLanguage(c, patientId, value, note);
+  await checkForCrisisLanguage(c, patientId, storedValue, note);
   return insertedLog;
 }
 
@@ -2692,7 +2941,11 @@ async function updateCompatibilityLog(
     throw new HttpError(403, "Forbidden");
   }
 
-  const nextValue = jsonValue(value);
+  const storedValue =
+    isJsonObject(value) && typeof value.patientId !== "string"
+      ? { ...value, patientId: publicPatientId(patient) }
+      : value;
+  const nextValue = jsonValue(storedValue);
   await c.env.DB.prepare("UPDATE logs SET value = ?, note = ? WHERE id = ?")
     .bind(nextValue, note, existing.id)
     .run();
@@ -2704,7 +2957,7 @@ async function updateCompatibilityLog(
     .bind(
       existing.id,
       JSON.stringify({ value: parseStoredJson(existing.value), note: existing.note }),
-      JSON.stringify({ value, note }),
+      JSON.stringify({ value: storedValue, note }),
       c.var.user.id
     )
     .run();
@@ -2714,7 +2967,7 @@ async function updateCompatibilityLog(
     throw new HttpError(500, "Could not update log");
   }
 
-  await checkForCrisisLanguage(c, existing.patient_id, value, note);
+  await checkForCrisisLanguage(c, existing.patient_id, storedValue, note);
   return updated;
 }
 
@@ -2821,7 +3074,7 @@ function entryMeta(log: LogRow) {
 }
 
 function recordPatientId(value: unknown, patient: PatientRow): string {
-  return isJsonObject(value) && typeof value.patientId === "string" ? value.patientId : String(patient.id);
+  return isJsonObject(value) && typeof value.patientId === "string" ? value.patientId : publicPatientId(patient);
 }
 
 function toEmotionRecord(log: LogRow, patient: PatientRow) {
@@ -2872,7 +3125,7 @@ function toDailyReportRecord(log: LogRow, patient: PatientRow) {
 function dailyReportRowToRecord(row: DailyReportRow) {
   return {
     id: row.id,
-    patientId: row.client_patient_id ?? String(row.patient_id),
+    patientId: publicPatientIdFromScopedRow(row),
     reportType: row.report_type,
     bedTime: row.bed_time,
     wakeTime: row.wake_time,
@@ -2932,7 +3185,7 @@ function toWeeklyScreeningRecord(log: LogRow, patient: PatientRow) {
 function weeklyScreeningRowToRecord(row: WeeklyScreeningRow) {
   return {
     id: row.id,
-    patientId: row.client_patient_id ?? String(row.patient_id),
+    patientId: publicPatientIdFromScopedRow(row),
     wishedDead: row.wished_dead === 1,
     familyBetterOffDead: row.family_better_off_dead === 1,
     thoughtsKillingSelf: row.thoughts_killing_self === 1,
@@ -2968,10 +3221,71 @@ function weeklyScreeningRowToRecord(row: WeeklyScreeningRow) {
   };
 }
 
+function entryRevisionEntityType(type: LogType): "emotion" | "daily_report" | "weekly_screening" {
+  if (type === "sleep") {
+    return "daily_report";
+  }
+
+  if (type === "weekly_check") {
+    return "weekly_screening";
+  }
+
+  return "emotion";
+}
+
+function revisionValueJson(raw: string): JsonObject {
+  const parsed = parseStoredJson(raw);
+  return isJsonObject(parsed) ? parsed : { value: parsed };
+}
+
+function revisionSummary(row: EntryRevisionRow): string {
+  const entity = entryRevisionEntityType(row.type).replace("_", " ");
+  const before = revisionValueJson(row.old_value);
+  const after = revisionValueJson(row.new_value);
+  const beforeValue = isJsonObject(before.value) ? before.value : before;
+  const afterValue = isJsonObject(after.value) ? after.value : after;
+  const changedKeys =
+    isJsonObject(beforeValue) && isJsonObject(afterValue)
+      ? Object.keys({ ...beforeValue, ...afterValue }).filter(
+          (key) => JSON.stringify(beforeValue[key]) !== JSON.stringify(afterValue[key])
+        )
+      : [];
+
+  if (changedKeys.length === 0) {
+    return `Updated ${entity} entry.`;
+  }
+
+  return `Updated ${entity} entry fields: ${changedKeys.slice(0, 4).join(", ")}.`;
+}
+
+function isSuspiciousRevision(row: EntryRevisionRow): boolean {
+  const beforeText = row.old_value.toLowerCase();
+  const afterText = row.new_value.toLowerCase();
+  const beforeHasSafetySignal = /self[- ]?harm|suicid|kill myself|violence|hurt myself|critical/.test(beforeText);
+  const afterHasSafetySignal = /self[- ]?harm|suicid|kill myself|violence|hurt myself|critical/.test(afterText);
+  return beforeHasSafetySignal && !afterHasSafetySignal;
+}
+
+function entryRevisionRowToRecord(row: EntryRevisionRow, patient: PatientRow) {
+  return {
+    id: row.id,
+    entityType: entryRevisionEntityType(row.type),
+    entityId: row.log_id,
+    patientId: publicPatientId(patient),
+    actorRole: toClientRole(row.actor_role),
+    actorUsername: row.actor_patient_code ?? row.actor_email,
+    beforeJson: row.old_value,
+    afterJson: row.new_value,
+    summary: revisionSummary(row),
+    suspicious: isSuspiciousRevision(row),
+    timestamp: row.edited_at,
+  };
+}
+
 function observationRowToRecord(row: ObservationRow) {
   return {
     id: row.id,
-    patientId: row.client_patient_id ?? String(row.patient_id),
+    patientId: publicPatientIdFromScopedRow(row),
     observationType: row.observation_type,
     observation: row.observation,
     priority: row.priority,
@@ -2991,7 +3305,7 @@ function observationRowToRecord(row: ObservationRow) {
 function medicationRowToRecord(row: MedicationRow) {
   return {
     id: row.id,
-    patientId: String(row.patient_id),
+    patientId: publicPatientIdFromScopedRow(row),
     medicationName: row.name,
     dose: row.dosage,
     schedule: row.frequency,
@@ -3007,7 +3321,7 @@ function medicationRowToRecord(row: MedicationRow) {
 
 function carePlanRowToRecord(row: CarePlanRow) {
   return {
-    patientId: row.client_patient_id ?? String(row.patient_id),
+    patientId: publicPatientIdFromScopedRow(row),
     goals: row.goals,
     triggers: row.triggers,
     warningSigns: row.warning_signs,
@@ -3022,6 +3336,163 @@ function carePlanRowToRecord(row: CarePlanRow) {
 
 function emptyRate() {
   return { numerator: 0, denominator: 0, percent: 0 };
+}
+
+function makeRate(numerator: number, denominator: number) {
+  return {
+    numerator,
+    denominator,
+    percent: denominator > 0 ? Math.round((numerator / denominator) * 100) : 0,
+  };
+}
+
+async function countRows(c: AppContext, sql: string, ...values: D1Bindable[]): Promise<number> {
+  const statement = c.env.DB.prepare(sql);
+  const row = await (values.length > 0 ? statement.bind(...values) : statement).first<{ count: number }>();
+  return row?.count ?? 0;
+}
+
+async function calculatePilotMetrics(c: AppContext) {
+  const now = new Date().toISOString();
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+
+  const [
+    patientCount,
+    consentCount,
+    inviteCount,
+    acceptedInviteCount,
+    recentMoodPatients,
+    recentDailyReportPatients,
+    recentWeeklyScreenPatients,
+    moodLogCount,
+    clinicallyUsableMoodCount,
+    totalLogCount,
+    editCount,
+    editedDailyCount,
+    editedWeeklyCount,
+    dailyReportCount,
+    weeklyScreenCount,
+    nightReportCount,
+    nightReportMealCount,
+    mismatchAlertCount,
+    criticalObservationCount,
+    acknowledgedCriticalObservationCount,
+    criticalObservationSlaCount,
+  ] = await Promise.all([
+    countRows(c, "SELECT COUNT(*) AS count FROM patients"),
+    countRows(c, "SELECT COUNT(*) AS count FROM patients WHERE consent_given = 1"),
+    countRows(c, "SELECT COUNT(*) AS count FROM invites"),
+    countRows(c, "SELECT COUNT(*) AS count FROM invites WHERE accepted_at IS NOT NULL"),
+    countRows(
+      c,
+      "SELECT COUNT(DISTINCT patient_id) AS count FROM logs WHERE type = 'mood' AND datetime(created_at) >= datetime(?)",
+      sevenDaysAgo
+    ),
+    countRows(
+      c,
+      "SELECT COUNT(DISTINCT patient_id) AS count FROM daily_reports WHERE datetime(created_at) >= datetime(?)",
+      sevenDaysAgo
+    ),
+    countRows(
+      c,
+      "SELECT COUNT(DISTINCT patient_id) AS count FROM weekly_screenings WHERE datetime(created_at) >= datetime(?)",
+      fourteenDaysAgo
+    ),
+    countRows(c, "SELECT COUNT(*) AS count FROM logs WHERE type = 'mood'"),
+    countRows(
+      c,
+      `SELECT COUNT(*) AS count
+       FROM logs
+       WHERE type = 'mood'
+         AND json_extract(value, '$.emotion') IS NOT NULL
+         AND json_extract(value, '$.sleepHours') IS NOT NULL
+         AND json_extract(value, '$.stressLevel') IS NOT NULL`
+    ),
+    countRows(c, "SELECT COUNT(*) AS count FROM logs"),
+    countRows(c, "SELECT COUNT(*) AS count FROM log_edits"),
+    countRows(c, "SELECT COUNT(*) AS count FROM daily_reports WHERE edit_count > 0 OR suspicious_edit_count > 0"),
+    countRows(c, "SELECT COUNT(*) AS count FROM weekly_screenings WHERE edit_count > 0 OR suspicious_edit_count > 0"),
+    countRows(c, "SELECT COUNT(*) AS count FROM daily_reports"),
+    countRows(c, "SELECT COUNT(*) AS count FROM weekly_screenings"),
+    countRows(c, "SELECT COUNT(*) AS count FROM daily_reports WHERE report_type = 'night'"),
+    countRows(c, "SELECT COUNT(*) AS count FROM daily_reports WHERE report_type = 'night' AND meals_count IS NOT NULL"),
+    countRows(c, "SELECT COUNT(*) AS count FROM alerts WHERE type = 'mismatch'"),
+    countRows(c, "SELECT COUNT(*) AS count FROM observations WHERE priority = 'Critical' OR observation_type = 'Alert'"),
+    countRows(
+      c,
+      "SELECT COUNT(*) AS count FROM observations WHERE (priority = 'Critical' OR observation_type = 'Alert') AND status = 'acknowledged'"
+    ),
+    countRows(
+      c,
+      `SELECT COUNT(*) AS count
+       FROM observations
+       WHERE (priority = 'Critical' OR observation_type = 'Alert')
+         AND status = 'acknowledged'
+         AND acknowledged_at IS NOT NULL
+         AND (julianday(acknowledged_at) - julianday(created_at)) * 24 * 60 <= 60`
+    ),
+  ]);
+
+  const missedMedicationRows = await c.env.DB.prepare(
+    "SELECT value FROM logs WHERE type = 'mood' AND json_extract(value, '$.medicationAdherence') IN ('missed_some', 'missed_all')"
+  ).all<{ value: string }>();
+  const missedMedicationValues = missedMedicationRows.results ?? [];
+  const missedMedicationWithDetail = missedMedicationValues.filter((row) => {
+    const value = parseStoredJson(row.value);
+    return (
+      isJsonObject(value) &&
+      typeof value.missedMedicationName === "string" &&
+      value.missedMedicationName.trim().length > 0 &&
+      typeof value.missedMedicationReason === "string" &&
+      value.missedMedicationReason.trim().length > 0
+    );
+  }).length;
+
+  const revisionRows = await c.env.DB.prepare(
+    `SELECT log_edits.*, logs.patient_id, logs.type, users.email AS actor_email,
+            users.name AS actor_name, users.role AS actor_role, users.patient_code AS actor_patient_code
+     FROM log_edits
+     INNER JOIN logs ON logs.id = log_edits.log_id
+     INNER JOIN users ON users.id = log_edits.edited_by_user_id
+     LIMIT 500`
+  ).all<EntryRevisionRow>();
+  const suspiciousEditCount = (revisionRows.results ?? []).filter(isSuspiciousRevision).length;
+
+  const averageCriticalAlertAcknowledgementMinutes = await c.env.DB.prepare(
+    `SELECT AVG((julianday(acknowledged_at) - julianday(created_at)) * 24 * 60) AS averageMinutes
+     FROM observations
+     WHERE (priority = 'Critical' OR observation_type = 'Alert')
+       AND status = 'acknowledged'
+       AND acknowledged_at IS NOT NULL`
+  ).first<{ averageMinutes: number | null }>();
+
+  const totalStructuredEntries = moodLogCount + dailyReportCount + weeklyScreenCount;
+  const totalReliabilityFlags = editedDailyCount + editedWeeklyCount + suspiciousEditCount;
+  const consistencyDenominator = totalStructuredEntries + mismatchAlertCount;
+
+  return {
+    activationRate: makeRate(acceptedInviteCount, inviteCount),
+    consentComprehensionRate: makeRate(consentCount, patientCount),
+    dailyCheckInCompletionRate: makeRate(recentMoodPatients, patientCount),
+    dailyReportCompletionRate: makeRate(recentDailyReportPatients, patientCount),
+    weeklyScreenCompletionRate: makeRate(recentWeeklyScreenPatients, patientCount),
+    clinicallyUsableEntryRate: makeRate(clinicallyUsableMoodCount, moodLogCount),
+    editRate: makeRate(editCount, totalLogCount),
+    suspiciousEditRate: makeRate(suspiciousEditCount, editCount),
+    reliabilityFlagRate: makeRate(totalReliabilityFlags, totalStructuredEntries),
+    missedMedicationDetailCaptureRate: makeRate(missedMedicationWithDetail, missedMedicationValues.length),
+    mealsCompletenessRate: makeRate(nightReportMealCount, nightReportCount),
+    consistencyRate: makeRate(totalStructuredEntries, consistencyDenominator),
+    criticalAlertAcknowledgementRate: makeRate(acknowledgedCriticalObservationCount, criticalObservationCount),
+    criticalAlertSlaRate: makeRate(criticalObservationSlaCount, acknowledgedCriticalObservationCount),
+    averageCriticalAlertAcknowledgementMinutes:
+      averageCriticalAlertAcknowledgementMinutes?.averageMinutes == null
+        ? null
+        : Math.round(averageCriticalAlertAcknowledgementMinutes.averageMinutes),
+    averageSubmissionToReviewMinutes: null,
+    lastUpdatedAt: now,
+  };
 }
 
 function emptyPilotMetrics() {

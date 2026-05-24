@@ -20,6 +20,7 @@ import type {
   EmotionRecord,
   MedicationRecord,
   ObservationRecord,
+  PatientSummary,
   WeeklyScreeningRecord,
 } from "@shared/contracts";
 import { formatDisplayName } from "@shared/contracts";
@@ -138,6 +139,7 @@ export default function DoctorReviewPage({
   const [revisions, setRevisions] = useState<EntryRevisionRecord[]>([]);
   const [medications, setMedications] = useState<MedicationRecord[]>([]);
   const [carePlan, setCarePlan] = useState<CarePlanRecord | null>(null);
+  const [patients, setPatients] = useState<PatientSummary[]>([]);
   const [demoMode, setDemoMode] = useState<DemoModeStatus | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [showCriticalAlert, setShowCriticalAlert] = useState(false);
@@ -164,6 +166,7 @@ export default function DoctorReviewPage({
         nextRevisions,
         nextMedications,
         nextCarePlan,
+        nextPatients,
         nextDemoMode,
       ] = await Promise.all([
         apiRequest<EmotionRecord[]>(`/api/emotions/${encodeURIComponent(patientId)}`),
@@ -185,6 +188,7 @@ export default function DoctorReviewPage({
         apiRequest<CarePlanRecord | null>(
           `/api/care-plan/${encodeURIComponent(patientId)}`,
         ),
+        apiRequest<PatientSummary[]>("/api/patients"),
         apiRequest<DemoModeStatus>("/api/demo-mode"),
       ]);
 
@@ -196,6 +200,7 @@ export default function DoctorReviewPage({
       setMedications(nextMedications);
       setCarePlan(nextCarePlan);
       setCarePlanForm(createCarePlanForm(nextCarePlan));
+      setPatients(nextPatients);
       setDemoMode(nextDemoMode);
     } catch (error) {
       toast({
@@ -216,26 +221,38 @@ export default function DoctorReviewPage({
     ...entry,
     observations: [],
   }));
+  const reviewPatientId =
+    entries[0]?.patientId ??
+    dailyReports[0]?.patientId ??
+    screenings[0]?.patientId ??
+    observations[0]?.patientId ??
+    medications[0]?.patientId ??
+    carePlan?.patientId ??
+    patientId;
+  const patientSummary = patients.find((patient) => patient.username === reviewPatientId) ?? null;
+  const patientDisplayName = patientSummary ? formatDisplayName(patientSummary) : reviewPatientId;
+  const patientLabel =
+    patientDisplayName === reviewPatientId ? reviewPatientId : `${patientDisplayName} (${reviewPatientId})`;
   const latestScreening = getLatestWeeklyScreening(screenings);
   const latestDisposition = latestScreening
     ? getWeeklyScreeningDisposition(latestScreening)
     : null;
   const risk = buildPatientRiskSnapshot(
-    patientId,
+    reviewPatientId,
     summaryLogs,
     dailyReports,
     screenings,
     observations,
   );
   const weeklyReview = buildWeeklyPatientReview(
-    patientId,
+    reviewPatientId,
     summaryLogs,
     dailyReports,
     screenings,
     observations,
   );
   const visitSummary = buildDoctorVisitSummary({
-    patientId,
+    patientId: patientLabel,
     logs: summaryLogs,
     dailyReports,
     screenings,
@@ -245,7 +262,7 @@ export default function DoctorReviewPage({
     risk,
   });
   const visitQuestions = buildDoctorQuestions({
-    patientId,
+    patientId: patientLabel,
     logs: summaryLogs,
     dailyReports,
     screenings,
@@ -264,7 +281,7 @@ export default function DoctorReviewPage({
   const inactiveMedications = medications.filter((medication) => !medication.isActive);
   const criticalAlert = getDoctorCriticalAlert(entries, dailyReports, screenings, observations);
   const isSyntheticDemoPatient =
-    demoMode?.activeScenarioId != null && patientId.toLowerCase().startsWith("demo-");
+    demoMode?.activeScenarioId != null && reviewPatientId.toLowerCase().startsWith("demo-");
 
   const showSyntheticDemoToast = (action: string) => {
     toast({
@@ -276,7 +293,7 @@ export default function DoctorReviewPage({
 
   useEffect(() => {
     setShowCriticalAlert(Boolean(criticalAlert));
-  }, [patientId, criticalAlert?.targetId]);
+  }, [reviewPatientId, criticalAlert?.targetId]);
 
   useEffect(() => {
     if (!pendingScrollTargetId) {
@@ -303,7 +320,7 @@ export default function DoctorReviewPage({
   ]);
 
   const handleBackToSupport = () => {
-    navigate(`/support?patient=${encodeURIComponent(patientId)}`);
+    navigate(`/support?patient=${encodeURIComponent(reviewPatientId)}`);
   };
 
   const handleCopySummary = async () => {
@@ -393,7 +410,7 @@ export default function DoctorReviewPage({
         await apiRequest<MedicationRecord>("/api/medications", {
           method: "POST",
           data: {
-            patientId,
+            patientId: reviewPatientId,
             ...medicationPayload,
           },
         });
@@ -479,7 +496,7 @@ export default function DoctorReviewPage({
       };
 
       if (carePlan) {
-        await apiRequest<CarePlanRecord>(`/api/care-plan/${encodeURIComponent(patientId)}`, {
+        await apiRequest<CarePlanRecord>(`/api/care-plan/${encodeURIComponent(reviewPatientId)}`, {
           method: "PATCH",
           data: carePlanPayload,
         });
@@ -487,7 +504,7 @@ export default function DoctorReviewPage({
         await apiRequest<CarePlanRecord>("/api/care-plan", {
           method: "POST",
           data: {
-            patientId,
+            patientId: reviewPatientId,
             ...carePlanPayload,
           },
         });
@@ -519,7 +536,7 @@ export default function DoctorReviewPage({
             variant="compact"
             showTagline={false}
             context="Doctor Review"
-            subtitle={`${patientId} | ${clinicianName}`}
+            subtitle={`${patientLabel} | ${clinicianName}`}
           />
 
           <div className="flex flex-wrap justify-end gap-3">
@@ -547,7 +564,8 @@ export default function DoctorReviewPage({
       <main className="app-container py-6 md:py-8">
         {showCriticalAlert && criticalAlert ? (
           <DoctorCriticalAlertOverlay
-            patientId={patientId}
+            patientName={patientDisplayName}
+            patientCode={reviewPatientId}
             alert={criticalAlert}
             onOpen={handleOpenCriticalAlert}
             onDismiss={() => setShowCriticalAlert(false)}
@@ -559,8 +577,13 @@ export default function DoctorReviewPage({
             <div className="hero-copy">
               <p className="eyebrow">Doctor Review Page</p>
               <h1 className="hero-title text-balance">
-                Summary-first clinical review for {patientId}.
+                Summary-first clinical review for {patientDisplayName}.
               </h1>
+              {patientDisplayName !== reviewPatientId ? (
+                <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Patient ID: {reviewPatientId}
+                </p>
+              ) : null}
               <p className="hero-text">
                 This page keeps the visit summary, trends, safety screen, medications, and care
                 plan in one cleaner doctor-facing layout.
@@ -734,7 +757,8 @@ export default function DoctorReviewPage({
           {criticalAlert ? (
             <DoctorCriticalAlertCallout
               className="mt-6"
-              patientId={patientId}
+              patientName={patientDisplayName}
+              patientCode={reviewPatientId}
               alert={criticalAlert}
               onOpen={handleOpenCriticalAlert}
             />
@@ -1468,12 +1492,14 @@ function EmptyPanel({ message }: { message: string }) {
 }
 
 function DoctorCriticalAlertOverlay({
-  patientId,
+  patientName,
+  patientCode,
   alert,
   onOpen,
   onDismiss,
 }: {
-  patientId: string;
+  patientName: string;
+  patientCode: string;
   alert: DoctorCriticalAlertTarget;
   onOpen: () => void;
   onDismiss: () => void;
@@ -1483,8 +1509,13 @@ function DoctorCriticalAlertOverlay({
       <div className="w-full max-w-3xl rounded-[32px] border border-rose-200 bg-white p-6 shadow-2xl">
         <p className="mini-heading text-rose-700">Critical Alert</p>
         <h2 className="mt-3 text-3xl font-semibold text-slate-950">
-          {patientId} needs immediate review.
+          {patientName} needs immediate review.
         </h2>
+        {patientName !== patientCode ? (
+          <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Patient ID: {patientCode}
+          </p>
+        ) : null}
         <p className="mt-4 text-base leading-7 text-slate-700">{alert.summary}</p>
         <p className="mt-3 text-sm leading-6 text-slate-600">{alert.detail}</p>
         <div className="mt-4 rounded-[22px] border border-rose-200 bg-rose-50 px-4 py-4 text-sm leading-6 text-rose-900">
@@ -1511,12 +1542,14 @@ function DoctorCriticalAlertOverlay({
 }
 
 function DoctorCriticalAlertCallout({
-  patientId,
+  patientName,
+  patientCode,
   alert,
   onOpen,
   className = "",
 }: {
-  patientId: string;
+  patientName: string;
+  patientCode: string;
   alert: DoctorCriticalAlertTarget;
   onOpen: () => void;
   className?: string;
@@ -1531,8 +1564,13 @@ function DoctorCriticalAlertCallout({
         Critical Alert
       </p>
       <h3 className="mt-3 text-2xl font-semibold text-rose-950">
-        {patientId} requires immediate clinical attention.
+        {patientName} requires immediate clinical attention.
       </h3>
+      {patientName !== patientCode ? (
+        <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-rose-700">
+          Patient ID: {patientCode}
+        </p>
+      ) : null}
       <p className="mt-3 text-sm leading-6 text-rose-900">{alert.summary}</p>
       <p className="mt-2 text-sm leading-6 text-rose-800">{alert.detail}</p>
       <p className="mt-3 text-sm leading-6 text-rose-800">

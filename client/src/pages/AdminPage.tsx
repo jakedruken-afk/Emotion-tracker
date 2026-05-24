@@ -2,11 +2,13 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { format } from "date-fns";
 import {
   Copy,
+  KeyRound,
   Link as LinkIcon,
   LogOut,
   RefreshCw,
   Send,
   ShieldCheck,
+  X,
   UserCog,
   UserPlus,
   Users,
@@ -83,6 +85,10 @@ export default function AdminPage({ user, onLogout }: AdminPageProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [isCreatingStaff, setIsCreatingStaff] = useState(false);
   const [isCreatingInvite, setIsCreatingInvite] = useState(false);
+  const [isResendingInviteId, setIsResendingInviteId] = useState<number | null>(null);
+  const [passwordResetUserId, setPasswordResetUserId] = useState<number | null>(null);
+  const [passwordResetValue, setPasswordResetValue] = useState("");
+  const [isResettingPassword, setIsResettingPassword] = useState(false);
   const { toast } = useToast();
 
   const doctors = useMemo(
@@ -217,6 +223,68 @@ export default function AdminPage({ user, onLogout }: AdminPageProps) {
         description: getErrorMessage(error),
         variant: "error",
       });
+    }
+  };
+
+  const handleStartPasswordReset = (target: AdminUserRecord) => {
+    setPasswordResetUserId(target.id);
+    setPasswordResetValue("");
+  };
+
+  const handleCancelPasswordReset = () => {
+    setPasswordResetUserId(null);
+    setPasswordResetValue("");
+  };
+
+  const handleResetPassword = async (target: AdminUserRecord) => {
+    setIsResettingPassword(true);
+
+    try {
+      await apiRequest(`/api/admin/users/${target.id}/password`, {
+        method: "PATCH",
+        data: { password: passwordResetValue },
+      });
+      toast({
+        title: "Password reset",
+        description: `${target.name} can now sign in with the temporary password.`,
+        variant: "success",
+      });
+      handleCancelPasswordReset();
+      await loadAdmin();
+    } catch (error) {
+      toast({
+        title: "Could not reset password",
+        description: getErrorMessage(error),
+        variant: "error",
+      });
+    } finally {
+      setIsResettingPassword(false);
+    }
+  };
+
+  const handleResendInvite = async (invite: InviteRecord) => {
+    setIsResendingInviteId(invite.id);
+
+    try {
+      const resentInvite = await apiRequest<InviteCreateResponse>(`/api/invites/${invite.id}/resend`, {
+        method: "POST",
+      });
+      setLatestInviteUrl(resentInvite.activationUrl);
+      toast({
+        title: resentInvite.emailDelivery?.status === "sent" ? "Invite email resent" : "Invite link regenerated",
+        description:
+          resentInvite.emailDelivery?.message ?? "Copy the refreshed activation link and send it securely.",
+        variant: "success",
+      });
+      await loadAdmin();
+    } catch (error) {
+      toast({
+        title: "Could not resend invite",
+        description: getErrorMessage(error),
+        variant: "error",
+      });
+    } finally {
+      setIsResendingInviteId(null);
     }
   };
 
@@ -577,8 +645,50 @@ export default function AdminPage({ user, onLogout }: AdminPageProps) {
                       >
                         {account.isActive ? "Deactivate" : "Reactivate"}
                       </button>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => handleStartPasswordReset(account)}
+                      >
+                        <KeyRound className="h-4 w-4" />
+                        Reset Password
+                      </button>
                     </div>
                   </div>
+                  {passwordResetUserId === account.id ? (
+                    <div className="mt-4 rounded-[22px] border border-amber-200 bg-amber-50 px-4 py-4">
+                      <label className="label" htmlFor={`reset-password-${account.id}`}>
+                        Temporary password for {account.name}
+                      </label>
+                      <div className="mt-2 flex flex-col gap-3 sm:flex-row">
+                        <input
+                          id={`reset-password-${account.id}`}
+                          className="input"
+                          type="password"
+                          value={passwordResetValue}
+                          onChange={(event) => setPasswordResetValue(event.target.value)}
+                          autoComplete="new-password"
+                        />
+                        <button
+                          type="button"
+                          className="btn btn-primary"
+                          disabled={isResettingPassword}
+                          onClick={() => void handleResetPassword(account)}
+                        >
+                          <KeyRound className="h-4 w-4" />
+                          {isResettingPassword ? "Saving..." : "Save"}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          onClick={handleCancelPasswordReset}
+                        >
+                          <X className="h-4 w-4" />
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               ))
             ) : (
@@ -607,6 +717,15 @@ export default function AdminPage({ user, onLogout }: AdminPageProps) {
                     {invite.role === "patient" ? "Patient invite" : "Staff invite"} · expires{" "}
                     {format(new Date(invite.expiresAt), "MMM d, yyyy")}
                   </p>
+                  <button
+                    type="button"
+                    className="btn btn-secondary mt-4"
+                    disabled={isResendingInviteId === invite.id}
+                    onClick={() => void handleResendInvite(invite)}
+                  >
+                    <Send className="h-4 w-4" />
+                    {isResendingInviteId === invite.id ? "Resending..." : "Resend Invite Email"}
+                  </button>
                 </div>
               ))
             ) : (
