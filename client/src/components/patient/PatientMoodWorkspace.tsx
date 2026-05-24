@@ -389,7 +389,7 @@ export default function PatientMoodWorkspace({
           <div className="flex items-center gap-3">
             <Clock3 className="h-5 w-5 text-amber-500" />
             <div>
-              <h3 className="section-title text-lg">Today&apos;s reminders</h3>
+              <h3 className="section-title text-lg">Today's reminders</h3>
               <p className="section-copy">Small steps to keep your routine complete.</p>
             </div>
           </div>

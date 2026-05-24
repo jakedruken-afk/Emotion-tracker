@@ -275,8 +275,8 @@ export default function PatientSleepWorkspace({
               <p className="mini-heading">Night Report</p>
               <h3 className="section-title mt-3">
                 {editingNightReportId != null
-                  ? "Update tonight&apos;s routine report."
-                  : "Set up tonight&apos;s sleep plan."}
+                  ? "Update tonight's routine report."
+                  : "Set up tonight's sleep plan."}
               </h3>
               <p className="section-copy">
                 Add your bedtime, meals today, and anything that may make sleep or eating hard tonight.
