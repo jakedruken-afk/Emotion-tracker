@@ -264,12 +264,18 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
       ...observations.map((observation) => observation.patientId),
     ]),
   ).sort();
+  const patientDisplayNameById = new Map(
+    patients.map((patient) => [patient.username, formatDisplayName(patient)]),
+  );
   const patientNameById = new Map(
     patients.map((patient) => [
       patient.username,
-      `${formatDisplayName(patient)} (${patient.username})`,
+      formatPatientLabel(formatDisplayName(patient), patient.username),
     ]),
   );
+  const selectedPatientDisplayName =
+    patientDisplayNameById.get(selectedPatientId) ?? selectedPatientId;
+  const selectedPatientLabel = patientNameById.get(selectedPatientId) ?? selectedPatientId;
 
   const isWithinTimeRange = (timestamp: string) => {
     if (timeFilter === "all") {
@@ -385,12 +391,16 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
     selectedPatientScreenings,
     selectedPatientObservations,
   );
-  const clinicianSummary = buildClinicianSummary(
+  const clinicianSummary = formatPatientReferences(
+    buildClinicianSummary(
+      selectedPatientId,
+      selectedPatientAllLogs,
+      selectedPatientAllDailyReports,
+      selectedPatientAllScreenings,
+      selectedPatientAllObservations,
+    ),
     selectedPatientId,
-    selectedPatientAllLogs,
-    selectedPatientAllDailyReports,
-    selectedPatientAllScreenings,
-    selectedPatientAllObservations,
+    selectedPatientDisplayName,
   );
   const averageSleepDuration = getAverageSleepDuration(selectedPatientMorningReports);
   const averageSleepQuality = getAverageSleepQuality(selectedPatientMorningReports);
@@ -410,10 +420,20 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
     selectedPatientAllScreenings,
     selectedPatientAllObservations,
   );
+  const weeklyReviewText = formatPatientReferences(
+    weeklyReview.plainText,
+    selectedPatientId,
+    selectedPatientDisplayName,
+  );
   const screeningActions = Array.from(
     new Set([screeningReviewAction, ...weeklyReview.suggestedActions]),
   );
   const focusRisk = selectedPatientRisk ?? weeklyReview.risk;
+  const focusRiskSummary = formatPatientReferences(
+    focusRisk.summary,
+    selectedPatientId,
+    selectedPatientDisplayName,
+  );
   const criticalPatients = patientRiskSnapshots.filter(
     (snapshot) => snapshot.riskLevel === "Critical",
   ).length;
@@ -694,7 +714,7 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
 
   const handleCopyWeeklyReview = async () => {
     try {
-      await navigator.clipboard.writeText(weeklyReview.plainText);
+      await navigator.clipboard.writeText(weeklyReviewText);
       toast({
         title: "Weekly review copied",
         description: "The weekly review is ready to paste into a chart note or email draft.",
@@ -710,7 +730,7 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
   };
 
   const handleDownloadWeeklyReview = () => {
-    const blob = new Blob([weeklyReview.plainText], {
+    const blob = new Blob([weeklyReviewText], {
       type: "text/plain;charset=utf-8",
     });
     const url = window.URL.createObjectURL(blob);
@@ -787,7 +807,8 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
       <main className="app-container py-6 md:py-8">
         {showCriticalAlert && criticalAlert ? (
           <CriticalAlertOverlay
-            patientId={selectedPatientId}
+            patientName={selectedPatientDisplayName}
+            patientCode={selectedPatientId}
             alert={criticalAlert}
             onOpen={handleOpenCriticalAlert}
             onAcknowledge={handleAcknowledgeCriticalAlert}
@@ -829,8 +850,8 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
               />
               <MetricTile
                 label="Patient in focus"
-                value={selectedPatientId}
-                detail={focusRisk.summary}
+                value={selectedPatientDisplayName}
+                detail={focusRiskSummary}
                 tone="coral"
               />
               <MetricTile
@@ -1075,6 +1096,9 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
                         key={snapshot.patientId}
                         snapshot={snapshot}
                         selected={snapshot.patientId === selectedPatientId}
+                        patientName={
+                          patientDisplayNameById.get(snapshot.patientId) ?? snapshot.patientId
+                        }
                         onSelect={() => selectPatient(snapshot.patientId)}
                       />
                     ))
@@ -1091,8 +1115,8 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
                 <section className="surface-panel">
                   <SectionHeader
                     eyebrow="Patient Focus"
-                    title={`${selectedPatientId} at a glance`}
-                    copy={focusRisk.summary}
+                    title={`${selectedPatientDisplayName} at a glance`}
+                    copy={focusRiskSummary}
                   />
 
                   <div className="mt-5 flex flex-wrap gap-2">
@@ -1204,7 +1228,8 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
                   {criticalAlert ? (
                     <CriticalAlertCallout
                       className="mt-6"
-                      patientId={selectedPatientId}
+                      patientName={selectedPatientDisplayName}
+                      patientCode={selectedPatientId}
                       alert={criticalAlert}
                       onOpen={handleOpenCriticalAlert}
                       onAcknowledge={handleAcknowledgeCriticalAlert}
@@ -1248,7 +1273,7 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
                   <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
                     <SectionHeader
                       eyebrow="Clinician Snapshot"
-                      title={`Prepared summary for ${selectedPatientId}`}
+                      title={`Prepared summary for ${selectedPatientLabel}`}
                       copy="A compressed handoff view for a doctor, nurse practitioner, or support worker."
                     />
                     <button type="button" className="btn btn-secondary" onClick={handleCopySummary}>
@@ -1283,7 +1308,7 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
                   <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                     <SectionHeader
                       eyebrow="Weekly Review"
-                      title={`One-week handoff for ${selectedPatientId}`}
+                      title={`One-week handoff for ${selectedPatientLabel}`}
                       copy="Keep the important changes, actions, and data gaps grouped together."
                     />
 
@@ -1311,7 +1336,7 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
                         <p className="text-sm font-semibold text-slate-900">Current risk status</p>
-                        <p className="mt-1 text-sm text-slate-600">{focusRisk.summary}</p>
+                        <p className="mt-1 text-sm text-slate-600">{focusRiskSummary}</p>
                       </div>
                       <span className={`badge ${riskMeta[focusRisk.riskLevel].badgeClass}`}>
                         {focusRisk.riskLevel}
@@ -1446,7 +1471,7 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
               <section className="surface-panel">
                 <SectionHeader
                   eyebrow="Weekly Safety Review"
-                  title={`Latest weekly screen for ${selectedPatientId}`}
+                  title={`Latest weekly screen for ${selectedPatientLabel}`}
                   copy="Keep the newest safety screen, follow-up action, and recent history together so the care team can react faster."
                 />
 
@@ -1621,7 +1646,7 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
               <section className="surface-panel">
                 <SectionHeader
                   eyebrow="Mood Timeline"
-                  title={`Recent check-ins for ${selectedPatientId}`}
+                  title={`Recent check-ins for ${selectedPatientLabel}`}
                   copy="Mood entries, supporting data, GPS snapshots, and linked observations stay together here."
                 />
 
@@ -1631,7 +1656,11 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
                   ) : selectedPatientLogs.length > 0 ? (
                     selectedPatientLogs.map((log) => (
                       <div key={log.id} id={`support-log-${log.id}`}>
-                        <EmotionLogCard log={log} onSelectPatient={selectPatient} />
+                        <EmotionLogCard
+                          log={log}
+                          patientName={patientDisplayNameById.get(log.patientId) ?? log.patientId}
+                          onSelectPatient={selectPatient}
+                        />
                       </div>
                     ))
                   ) : (
@@ -1719,7 +1748,7 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
               <section className="surface-panel">
                 <SectionHeader
                   eyebrow="Sleep Reports"
-                  title={`Morning and night reports for ${selectedPatientId}`}
+                  title={`Morning and night reports for ${selectedPatientLabel}`}
                   copy="Use this section to compare reported sleep routine with the emotional timeline."
                 />
 
@@ -1828,7 +1857,7 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
               <section className="surface-panel">
                 <SectionHeader
                   eyebrow="Add Observation"
-                  title={`Save a note for ${selectedPatientId}`}
+                  title={`Save a note for ${selectedPatientLabel}`}
                   copy="Use the observation form for professional notes, follow-up details, and quick documentation."
                 />
 
@@ -2009,7 +2038,7 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
                       {focusRisk.riskLevel} priority
                     </span>
                     <span className="badge bg-slate-100 text-slate-700">
-                      {selectedPatientId}
+                      {selectedPatientLabel}
                     </span>
                   </div>
 
@@ -2095,14 +2124,16 @@ function SectionHeader({
 }
 
 function CriticalAlertOverlay({
-  patientId,
+  patientName,
+  patientCode,
   alert,
   onOpen,
   onAcknowledge,
   isAcknowledging,
   onDismiss,
 }: {
-  patientId: string;
+  patientName: string;
+  patientCode: string;
   alert: CriticalAlertTarget;
   onOpen: () => void;
   onAcknowledge: () => void;
@@ -2114,8 +2145,13 @@ function CriticalAlertOverlay({
       <div className="w-full max-w-3xl rounded-[32px] border border-rose-200 bg-white p-6 shadow-2xl">
         <p className="mini-heading text-rose-700">Critical Alert</p>
         <h2 className="mt-3 text-3xl font-semibold text-slate-950">
-          {patientId} needs immediate review.
+          {patientName} needs immediate review.
         </h2>
+        {patientName !== patientCode ? (
+          <p className="mt-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+            Patient ID: {patientCode}
+          </p>
+        ) : null}
         <p className="mt-4 text-base leading-7 text-slate-700">{alert.summary}</p>
         <p className="mt-3 text-sm leading-6 text-slate-600">{alert.detail}</p>
         <div className="mt-4 rounded-[22px] border border-rose-200 bg-rose-50 px-4 py-4 text-sm leading-6 text-rose-900">
@@ -2154,14 +2190,16 @@ function CriticalAlertOverlay({
 }
 
 function CriticalAlertCallout({
-  patientId,
+  patientName,
+  patientCode,
   alert,
   onOpen,
   onAcknowledge,
   isAcknowledging,
   className = "",
 }: {
-  patientId: string;
+  patientName: string;
+  patientCode: string;
   alert: CriticalAlertTarget;
   onOpen: () => void;
   onAcknowledge: () => void;
@@ -2176,8 +2214,13 @@ function CriticalAlertCallout({
         Critical Alert
       </p>
       <h3 className="mt-3 text-2xl font-semibold text-rose-950">
-        {patientId} requires immediate attention.
+        {patientName} requires immediate attention.
       </h3>
+      {patientName !== patientCode ? (
+        <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-rose-700">
+          Patient ID: {patientCode}
+        </p>
+      ) : null}
       <p className="mt-3 text-sm leading-6 text-rose-900">{alert.summary}</p>
       <p className="mt-2 text-sm leading-6 text-rose-800">{alert.detail}</p>
       <p className="mt-3 text-sm leading-6 text-rose-800">
@@ -2363,12 +2406,22 @@ function getTimeFilterLabel(timeFilter: TimeFilter) {
   return `the last ${timeFilter} days`;
 }
 
+function formatPatientLabel(patientName: string, patientCode: string) {
+  return patientName === patientCode ? patientCode : `${patientName} (${patientCode})`;
+}
+
+function formatPatientReferences(text: string, patientCode: string, patientName: string) {
+  return patientName === patientCode ? text : text.split(patientCode).join(patientName);
+}
+
 function QueueCard({
   snapshot,
+  patientName,
   selected,
   onSelect,
 }: {
   snapshot: PatientRiskSnapshot;
+  patientName: string;
   selected: boolean;
   onSelect: () => void;
 }) {
@@ -2383,7 +2436,12 @@ function QueueCard({
       <div className="w-full">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <p className="text-lg font-semibold text-slate-900">{snapshot.patientId}</p>
+            <p className="text-lg font-semibold text-slate-900">{patientName}</p>
+            {patientName !== snapshot.patientId ? (
+              <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Patient ID: {snapshot.patientId}
+              </p>
+            ) : null}
             <p className="mt-1 text-sm text-slate-600">
               {snapshot.dominantEmotion
                 ? `Recent dominant mood: ${snapshot.dominantEmotion}`
@@ -2440,9 +2498,11 @@ function QueueCard({
 
 function EmotionLogCard({
   log,
+  patientName,
   onSelectPatient,
 }: {
   log: EmotionLog;
+  patientName: string;
   onSelectPatient: (patientId: string) => void;
 }) {
   return (
@@ -2460,7 +2520,12 @@ function EmotionLogCard({
             <p className="mt-1 text-sm text-slate-500">
               {format(new Date(log.timestamp), "MMM d, yyyy 'at' h:mm a")}
             </p>
-            <p className="mt-1 text-sm text-slate-500">Patient ID: {log.patientId}</p>
+            <p className="mt-1 text-sm text-slate-500">Patient: {patientName}</p>
+            {patientName !== log.patientId ? (
+              <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Patient ID: {log.patientId}
+              </p>
+            ) : null}
           </div>
         </div>
 
