@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { format } from "date-fns";
-import { LogOut } from "lucide-react";
+import { BookOpen, LogOut } from "lucide-react";
 import {
   getDailyReportStatusText,
   getLatestDailyReportByType,
@@ -12,6 +12,12 @@ import SectionTabs from "../components/SectionTabs";
 import PatientHistoryWorkspace from "../components/patient/PatientHistoryWorkspace";
 import PatientMoodWorkspace from "../components/patient/PatientMoodWorkspace";
 import PatientSleepWorkspace from "../components/patient/PatientSleepWorkspace";
+import PatientSettingsWorkspace, {
+  type PatientLocalSettings,
+} from "../components/patient/PatientSettingsWorkspace";
+import PatientTutorialOverlay, {
+  type PatientTutorialTab,
+} from "../components/patient/PatientTutorialOverlay";
 import {
   getLatestWeeklyScreening,
   getWeeklyScreeningDisposition,
@@ -76,6 +82,11 @@ const patientTabs = [
     label: "History",
     description: "See recent mood and sleep entries",
   },
+  {
+    id: "settings",
+    label: "Settings",
+    description: "Help, comfort, and privacy",
+  },
 ] as const;
 
 type PatientWorkspace = (typeof patientTabs)[number]["id"];
@@ -114,6 +125,12 @@ type PatientSafetyNotice = {
   title: string;
   detail: string;
   tone: "neutral" | "warning";
+};
+
+const defaultPatientLocalSettings: PatientLocalSettings = {
+  largerText: false,
+  reduceMotion: false,
+  tutorialOnLogin: false,
 };
 
 function createEmptyMorningReport(): MorningReportFormState {
@@ -298,6 +315,68 @@ function hasWeeklyDraftData(form: WeeklyScreeningFormState, editingId: number | 
   );
 }
 
+function getPatientSettingsKey(patientId: string) {
+  return `lamb_patient_settings_${patientId}`;
+}
+
+function getPatientTutorialSeenKey(patientId: string) {
+  return `lamb_patient_tutorial_seen_${patientId}`;
+}
+
+function loadPatientLocalSettings(patientId: string): PatientLocalSettings {
+  if (typeof window === "undefined") {
+    return defaultPatientLocalSettings;
+  }
+
+  try {
+    const storedValue = window.localStorage.getItem(getPatientSettingsKey(patientId));
+    if (!storedValue) {
+      return defaultPatientLocalSettings;
+    }
+
+    const parsedValue = JSON.parse(storedValue) as Partial<PatientLocalSettings>;
+    return {
+      largerText: parsedValue.largerText === true,
+      reduceMotion: parsedValue.reduceMotion === true,
+      tutorialOnLogin: parsedValue.tutorialOnLogin === true,
+    };
+  } catch {
+    return defaultPatientLocalSettings;
+  }
+}
+
+function savePatientLocalSettings(patientId: string, settings: PatientLocalSettings) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.setItem(getPatientSettingsKey(patientId), JSON.stringify(settings));
+}
+
+function hasSeenPatientTutorial(patientId: string) {
+  if (typeof window === "undefined") {
+    return true;
+  }
+
+  return window.localStorage.getItem(getPatientTutorialSeenKey(patientId)) === "true";
+}
+
+function markPatientTutorialSeen(patientId: string) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.setItem(getPatientTutorialSeenKey(patientId), "true");
+}
+
+function resetPatientTutorialSeen(patientId: string) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.removeItem(getPatientTutorialSeenKey(patientId));
+}
+
 function buildSafetyNotice(
   crisisLevel: "none" | "high" | "critical",
   queued: boolean,
@@ -411,7 +490,19 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
   const [patientSafetyNotice, setPatientSafetyNotice] = useState<PatientSafetyNotice | null>(
     null,
   );
+  const [patientLocalSettings, setPatientLocalSettings] = useState<PatientLocalSettings>(() =>
+    loadPatientLocalSettings(patientId),
+  );
+  const [isTutorialOpen, setIsTutorialOpen] = useState(false);
+  const [tutorialPromptedForSession, setTutorialPromptedForSession] = useState(false);
   const { toast } = useToast();
+  const hasRequiredConsent = Boolean(
+    consent?.moodTracking &&
+      consent?.sleepReports &&
+      consent?.weeklyScreening &&
+      consent?.acknowledgeStaffedHours &&
+      consent?.acknowledgeEmergencyLimits,
+  );
 
   const loadPatientData = async () => {
     setIsLoadingEntries(true);
@@ -614,6 +705,12 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
   }, [patientId]);
 
   useEffect(() => {
+    setPatientLocalSettings(loadPatientLocalSettings(patientId));
+    setTutorialPromptedForSession(false);
+    setIsTutorialOpen(false);
+  }, [patientId]);
+
+  useEffect(() => {
     refreshSyncState();
 
     const moodDraft = loadPatientDraft<{
@@ -692,6 +789,23 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
       void processSyncQueue();
     }
   }, [isOnline, patientId]);
+
+  useEffect(() => {
+    if (isLoadingConsent || !hasRequiredConsent || tutorialPromptedForSession) {
+      return;
+    }
+
+    setTutorialPromptedForSession(true);
+    if (patientLocalSettings.tutorialOnLogin || !hasSeenPatientTutorial(patientId)) {
+      setIsTutorialOpen(true);
+    }
+  }, [
+    hasRequiredConsent,
+    isLoadingConsent,
+    patientId,
+    patientLocalSettings.tutorialOnLogin,
+    tutorialPromptedForSession,
+  ]);
 
   useEffect(() => {
     if (!isOnline) {
@@ -1315,6 +1429,34 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
     setActiveTab("screening");
   };
 
+  const handlePatientLocalSettingsChange = (nextSettings: PatientLocalSettings) => {
+    setPatientLocalSettings(nextSettings);
+    savePatientLocalSettings(patientId, nextSettings);
+  };
+
+  const handleOpenTutorial = () => {
+    setIsTutorialOpen(true);
+  };
+
+  const handleCloseTutorial = () => {
+    markPatientTutorialSeen(patientId);
+    setIsTutorialOpen(false);
+  };
+
+  const handleTutorialTabSelect = (tab: PatientTutorialTab) => {
+    setActiveTab(tab);
+  };
+
+  const handleResetTutorial = () => {
+    resetPatientTutorialSeen(patientId);
+    setTutorialPromptedForSession(true);
+    toast({
+      title: "Tutorial reset",
+      description: "The tutorial will show again the next time this patient signs in here.",
+      variant: "success",
+    });
+  };
+
   const latestEntry = entries[0];
   const latestMorningReport = getLatestDailyReportByType(dailyReports, "morning");
   const latestNightReport = getLatestDailyReportByType(dailyReports, "night");
@@ -1328,13 +1470,6 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
   const latestScreeningLabel = latestScreening
     ? getWeeklyScreeningDispositionLabel(getWeeklyScreeningDisposition(latestScreening))
     : "Not started";
-  const hasRequiredConsent = Boolean(
-    consent?.moodTracking &&
-      consent?.sleepReports &&
-      consent?.weeklyScreening &&
-      consent?.acknowledgeStaffedHours &&
-      consent?.acknowledgeEmergencyLimits,
-  );
   const pendingSyncCount = loadPatientSyncQueue(patientId).length;
   const nextStepLabel = screeningDue
     ? "Weekly screen"
@@ -1356,7 +1491,11 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
         : "You can check in again whenever something changes.";
 
   return (
-    <div className="app-shell">
+    <div
+      className={`app-shell ${patientLocalSettings.largerText ? "patient-large-text" : ""} ${
+        patientLocalSettings.reduceMotion ? "patient-reduce-motion" : ""
+      }`}
+    >
       <header className="app-topbar">
         <div className="app-container flex items-center justify-between gap-4 py-4">
           <BrandMark
@@ -1366,10 +1505,17 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
             subtitle={`Welcome, ${formatDisplayName(user)}`}
           />
 
-          <button type="button" className="btn btn-secondary" onClick={onLogout}>
-            <LogOut className="h-4 w-4" />
-            Sign Out
-          </button>
+          <div className="flex shrink-0 items-center justify-end gap-2">
+            <button type="button" className="btn btn-secondary" onClick={handleOpenTutorial}>
+              <BookOpen className="h-4 w-4" />
+              <span className="hidden sm:inline">Tutorial</span>
+              <span className="sm:hidden">Help</span>
+            </button>
+            <button type="button" className="btn btn-secondary" onClick={onLogout}>
+              <LogOut className="h-4 w-4" />
+              Sign Out
+            </button>
+          </div>
         </div>
       </header>
 
@@ -1646,10 +1792,30 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
                   onEditScreening={handleEditScreening}
                 />
               ) : null}
+
+              {activeTab === "settings" ? (
+                <PatientSettingsWorkspace
+                  user={user}
+                  consent={consent}
+                  isOnline={isOnline}
+                  lastSyncedAt={lastSyncedAt}
+                  pendingSyncCount={pendingSyncCount}
+                  settings={patientLocalSettings}
+                  onSettingsChange={handlePatientLocalSettingsChange}
+                  onOpenTutorial={handleOpenTutorial}
+                  onResetTutorial={handleResetTutorial}
+                />
+              ) : null}
             </div>
           </>
         )}
       </main>
+
+      <PatientTutorialOverlay
+        isOpen={isTutorialOpen}
+        onClose={handleCloseTutorial}
+        onSelectTab={handleTutorialTabSelect}
+      />
     </div>
   );
 }

@@ -491,6 +491,32 @@
   .brand-hero-copy {
     @apply max-w-md;
   }
+
+  .patient-large-text {
+    font-size: 1.06rem;
+  }
+
+  .patient-large-text .section-copy,
+  .patient-large-text .hero-text,
+  .patient-large-text .metric-detail,
+  .patient-large-text .summary-row {
+    font-size: 1rem;
+  }
+
+  .patient-reduce-motion *,
+  .patient-reduce-motion *::before,
+  .patient-reduce-motion *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .patient-reduce-motion .tab-pill:hover,
+  .patient-reduce-motion .selection-card:hover,
+  .patient-reduce-motion .btn-primary:hover {
+    transform: none;
+  }
 }
 
 @media (min-width: 768px) {
