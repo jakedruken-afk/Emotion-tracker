@@ -924,6 +924,7 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
     setMedicationAdherence("not_prescribed");
     setMissedMedicationName("");
     setMissedMedicationReason("");
+    setIncludeLocation(false);
     setLocationFeedback(null);
   };
 
@@ -1027,10 +1028,10 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
           : locationCaptured
             ? wasEditing
               ? "Your updated check-in and location have been recorded."
-              : "Your latest check-in and location have been recorded."
+              : "Your latest check-in and location have been recorded. You can add another check-in anytime something changes."
             : wasEditing
               ? "Your check-in changes have been saved."
-              : "Your latest check-in has been recorded.",
+              : "Your latest check-in has been recorded. You can add another check-in anytime something changes.",
         variant: "success",
       });
 
@@ -1049,7 +1050,7 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
       } else {
         refreshSyncState();
       }
-      setActiveTab("history");
+      setActiveTab(wasEditing ? "history" : "mood");
     } catch (error) {
       toast({
         title: "Could not save your check-in",
