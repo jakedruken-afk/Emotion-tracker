@@ -154,6 +154,7 @@ type ObservationFormState = {
 };
 
 type CriticalAlertTarget = {
+  patientId: string;
   title: string;
   summary: string;
   detail: string;
@@ -442,11 +443,16 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
   ).length;
   const recommendedCarePathways = getRecommendedCarePathways(focusRisk.riskLevel);
   const criticalAlert = getSupportCriticalAlert(
-    selectedPatientAllLogs,
-    selectedPatientAllDailyReports,
-    selectedPatientAllScreenings,
-    selectedPatientAllObservations,
+    logs,
+    dailyReports,
+    screenings,
+    observations,
+    patientRiskSnapshots,
   );
+  const criticalAlertPatientDisplayName = criticalAlert
+    ? (patientDisplayNameById.get(criticalAlert.patientId) ?? criticalAlert.patientId)
+    : selectedPatientDisplayName;
+  const criticalAlertPatientCode = criticalAlert?.patientId ?? selectedPatientId;
   const selectedPatientFlags = Array.from(
     new Set(selectedPatientLogs.flatMap((log) => getEmotionFlags(log))),
   );
@@ -478,8 +484,8 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
   }, [patientIds, selectedPatientId, setSearchParams]);
 
   useEffect(() => {
-    setShowCriticalAlert(Boolean(criticalAlert));
-  }, [selectedPatientId, criticalAlert?.targetId]);
+    setShowCriticalAlert(Boolean(criticalAlert && criticalAlert.status !== "acknowledged"));
+  }, [criticalAlert?.patientId, criticalAlert?.status, criticalAlert?.targetId, selectedPatientId]);
 
   useEffect(() => {
     if (!pendingScrollTargetId) {
@@ -544,6 +550,9 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
     }
 
     setShowCriticalAlert(false);
+    if (criticalAlert.patientId !== selectedPatientId) {
+      selectPatient(criticalAlert.patientId);
+    }
     setTimeFilter("all");
     setEmotionFilter("all");
     setActiveTab(criticalAlert.tab);
@@ -807,13 +816,25 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
       <main className="app-container py-6 md:py-8">
         {showCriticalAlert && criticalAlert ? (
           <CriticalAlertOverlay
-            patientName={selectedPatientDisplayName}
-            patientCode={selectedPatientId}
+            patientName={criticalAlertPatientDisplayName}
+            patientCode={criticalAlertPatientCode}
             alert={criticalAlert}
             onOpen={handleOpenCriticalAlert}
             onAcknowledge={handleAcknowledgeCriticalAlert}
             isAcknowledging={isAcknowledgingAlert}
             onDismiss={() => setShowCriticalAlert(false)}
+          />
+        ) : null}
+
+        {criticalAlert && criticalAlert.status !== "acknowledged" ? (
+          <CriticalAlertCallout
+            className="mb-6 ring-2 ring-rose-200"
+            patientName={criticalAlertPatientDisplayName}
+            patientCode={criticalAlertPatientCode}
+            alert={criticalAlert}
+            onOpen={handleOpenCriticalAlert}
+            onAcknowledge={handleAcknowledgeCriticalAlert}
+            isAcknowledging={isAcknowledgingAlert}
           />
         ) : null}
 
@@ -1225,11 +1246,11 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
                     </button>
                   </div>
 
-                  {criticalAlert ? (
+                  {criticalAlert && criticalAlert.patientId === selectedPatientId ? (
                     <CriticalAlertCallout
                       className="mt-6"
-                      patientName={selectedPatientDisplayName}
-                      patientCode={selectedPatientId}
+                      patientName={criticalAlertPatientDisplayName}
+                      patientCode={criticalAlertPatientCode}
                       alert={criticalAlert}
                       onOpen={handleOpenCriticalAlert}
                       onAcknowledge={handleAcknowledgeCriticalAlert}
@@ -2140,10 +2161,12 @@ function CriticalAlertOverlay({
   isAcknowledging: boolean;
   onDismiss: () => void;
 }) {
+  const canAcknowledge = alert.observationId != null;
+
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-950/45 px-4 py-10">
       <div className="w-full max-w-3xl rounded-[32px] border border-rose-200 bg-white p-6 shadow-2xl">
-        <p className="mini-heading text-rose-700">Critical Alert</p>
+        <p className="mini-heading text-rose-700">{alert.title}</p>
         <h2 className="mt-3 text-3xl font-semibold text-slate-950">
           {patientName} needs immediate review.
         </h2>
@@ -2155,7 +2178,9 @@ function CriticalAlertOverlay({
         <p className="mt-4 text-base leading-7 text-slate-700">{alert.summary}</p>
         <p className="mt-3 text-sm leading-6 text-slate-600">{alert.detail}</p>
         <div className="mt-4 rounded-[22px] border border-rose-200 bg-rose-50 px-4 py-4 text-sm leading-6 text-rose-900">
-          {alert.status === "acknowledged"
+          {!canAcknowledge
+            ? "This critical risk signal should be opened and handled through the care team's safety workflow."
+            : alert.status === "acknowledged"
             ? `Owned by ${alert.acknowledgedByName ?? "a support worker"}${alert.acknowledgedAt ? ` since ${format(new Date(alert.acknowledgedAt), "MMM d, yyyy 'at' h:mm a")}` : ""}.`
             : "No support worker has acknowledged ownership yet."}
           {alert.ownershipNote ? ` ${alert.ownershipNote}` : ""}
@@ -2172,9 +2197,11 @@ function CriticalAlertOverlay({
             type="button"
             className="btn btn-secondary flex-1"
             onClick={onAcknowledge}
-            disabled={isAcknowledging || alert.status === "acknowledged"}
+            disabled={canAcknowledge && (isAcknowledging || alert.status === "acknowledged")}
           >
-            {alert.status === "acknowledged"
+            {!canAcknowledge
+              ? "Open Patient Review"
+              : alert.status === "acknowledged"
               ? "Already Acknowledged"
               : isAcknowledging
                 ? "Acknowledging..."
@@ -2206,12 +2233,14 @@ function CriticalAlertCallout({
   isAcknowledging: boolean;
   className?: string;
 }) {
+  const canAcknowledge = alert.observationId != null;
+
   return (
     <div
       className={`w-full rounded-[28px] border border-rose-200 bg-rose-50 px-5 py-5 text-left shadow-sm ${className}`}
     >
       <p className="text-xs font-semibold uppercase tracking-[0.3em] text-rose-700">
-        Critical Alert
+        {alert.title}
       </p>
       <h3 className="mt-3 text-2xl font-semibold text-rose-950">
         {patientName} requires immediate attention.
@@ -2224,7 +2253,9 @@ function CriticalAlertCallout({
       <p className="mt-3 text-sm leading-6 text-rose-900">{alert.summary}</p>
       <p className="mt-2 text-sm leading-6 text-rose-800">{alert.detail}</p>
       <p className="mt-3 text-sm leading-6 text-rose-800">
-        {alert.status === "acknowledged"
+        {!canAcknowledge
+          ? "Open this patient and follow the care team's safety workflow."
+          : alert.status === "acknowledged"
           ? `Owned by ${alert.acknowledgedByName ?? "a support worker"}.`
           : "No support worker has acknowledged ownership yet."}
       </p>
@@ -2236,9 +2267,11 @@ function CriticalAlertCallout({
           type="button"
           className="btn btn-secondary flex-1"
           onClick={onAcknowledge}
-          disabled={isAcknowledging || alert.status === "acknowledged"}
+          disabled={canAcknowledge && (isAcknowledging || alert.status === "acknowledged")}
         >
-          {alert.status === "acknowledged"
+          {!canAcknowledge
+            ? "Open Patient Review"
+            : alert.status === "acknowledged"
             ? "Already Acknowledged"
             : isAcknowledging
               ? "Acknowledging..."
@@ -2254,8 +2287,19 @@ function getSupportCriticalAlert(
   dailyReports: DailyReportRecord[],
   screenings: WeeklyScreeningRecord[],
   observations: ObservationRecord[],
+  riskSnapshots: PatientRiskSnapshot[] = [],
 ): CriticalAlertTarget | null {
   const candidates: Array<CriticalAlertTarget & { sortTime: number }> = [];
+  const acknowledgedLinkedAlerts = new Set(
+    observations
+      .filter(
+        (observation) =>
+          observation.status === "acknowledged" &&
+          observation.linkedEntityType != null &&
+          observation.linkedEntityId != null,
+      )
+      .map((observation) => `${observation.linkedEntityType}:${observation.linkedEntityId}`),
+  );
 
   for (const observation of observations) {
     if (observation.priority !== "Critical" && observation.observationType !== "Alert") {
@@ -2283,6 +2327,7 @@ function getSupportCriticalAlert(
     }
 
     candidates.push({
+      patientId: observation.patientId,
       title: "Critical Alert",
       summary: observation.observation,
       detail: `Alert recorded on ${format(
@@ -2306,7 +2351,12 @@ function getSupportCriticalAlert(
       continue;
     }
 
+    if (acknowledgedLinkedAlerts.has(`emotion:${log.id}`)) {
+      continue;
+    }
+
     candidates.push({
+      patientId: log.patientId,
       title: "Critical Alert",
       summary: log.crisisSummary ?? "A patient check-in includes critical safety language.",
       detail: `Triggered by a ${log.emotion.toLowerCase()} check-in recorded on ${format(
@@ -2330,7 +2380,12 @@ function getSupportCriticalAlert(
       continue;
     }
 
+    if (acknowledgedLinkedAlerts.has(`daily_report:${report.id}`)) {
+      continue;
+    }
+
     candidates.push({
+      patientId: report.patientId,
       title: "Critical Alert",
       summary: report.crisisSummary ?? "A sleep or meals report includes critical safety language.",
       detail: `Triggered by a ${report.reportType} report recorded on ${format(
@@ -2354,7 +2409,12 @@ function getSupportCriticalAlert(
       continue;
     }
 
+    if (acknowledgedLinkedAlerts.has(`weekly_screening:${screening.id}`)) {
+      continue;
+    }
+
     candidates.push({
+      patientId: screening.patientId,
       title: "Critical Alert",
       summary:
         screening.crisisSummary ??
@@ -2375,11 +2435,44 @@ function getSupportCriticalAlert(
     });
   }
 
+  for (const snapshot of riskSnapshots) {
+    if (snapshot.riskLevel !== "Critical") {
+      continue;
+    }
+
+    candidates.push({
+      patientId: snapshot.patientId,
+      title: "Critical Risk",
+      summary: snapshot.summary,
+      detail: snapshot.lastSeenAt
+        ? `Critical risk was calculated from patient data last seen on ${format(
+            new Date(snapshot.lastSeenAt),
+            "MMM d, yyyy 'at' h:mm a",
+          )}.`
+        : "Critical risk was calculated from the available patient data.",
+      tab: "queue",
+      targetId: `support-risk-${snapshot.patientId}`,
+      timestamp: snapshot.lastSeenAt ?? new Date().toISOString(),
+      observationId: null,
+      status: "open",
+      acknowledgedByName: null,
+      acknowledgedAt: null,
+      ownershipNote: null,
+      sortTime: snapshot.lastSeenAt ? new Date(snapshot.lastSeenAt).getTime() : 0,
+    });
+  }
+
   if (candidates.length === 0) {
     return null;
   }
 
-  return candidates.sort((left, right) => right.sortTime - left.sortTime)[0];
+  return candidates.sort((left, right) => {
+    if (left.status !== right.status) {
+      return left.status === "open" ? -1 : 1;
+    }
+
+    return right.sortTime - left.sortTime;
+  })[0];
 }
 
 function isNumber(value: number | null): value is number {
@@ -2427,6 +2520,7 @@ function QueueCard({
 }) {
   return (
     <button
+      id={`support-risk-${snapshot.patientId}`}
       type="button"
       className={`selection-card w-full ${riskMeta[snapshot.riskLevel].cardClass} ${
         selected ? "ring-2 ring-sky-500" : "ring-0"

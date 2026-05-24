@@ -313,11 +313,38 @@ const crisisKeywords = [
   "hurt myself",
   "harm myself",
   "end my life",
+  "want to die",
+  "wish i was dead",
+  "want to be dead",
+  "wish to be dead",
+  "want to not exist",
   "overdose",
   "violence",
   "violent",
   "hurt someone",
   "kill someone",
+];
+
+const criticalCrisisPatterns = [
+  /\b(i am|i'm|im|i feel|feel) (not safe|unsafe)\b/,
+  /\b(can'?t|cannot) keep myself safe\b/,
+  /\b(plan|planning|going|want|wanted|wants) to (end my life|hurt myself|self-harm|self harm|overdose|kill myself)\b/,
+  /\b(going to|plan to) (overdose|hurt myself|end it|kill myself)\b/,
+  /\bneed help staying safe right now\b/,
+  /\bi (want|wish) (to )?(die|be dead|not exist|disappear forever)\b/,
+  /\bi wish i (was|were) dead\b/,
+  /\bi (don'?t|do not) deserve to live\b/,
+];
+
+const historicalOrQuotedCrisisContext = [
+  /\b(last year|months ago|years ago|in the past|used to|used to have)\b/,
+  /\b(screen|question|form) asked\b/,
+  /\b(my friend|someone else|another person|client|patient) said\b/,
+  /\bden(y|ied|ying)\b/,
+  /\bnot having\b/,
+  /\bno current\b/,
+  /\bsafe plan\b/,
+  /\bcoping plan\b/,
 ];
 
 const app = new Hono<AppEnv>();
@@ -2921,7 +2948,14 @@ async function insertCompatibilityLog(
     throw new HttpError(500, "Could not create log");
   }
 
-  await checkForCrisisLanguage(c, patientId, storedValue, note);
+  await checkForCrisisLanguage(
+    c,
+    patientId,
+    storedValue,
+    note,
+    linkedObservationTypeForLog(type),
+    insertedLog.id,
+  );
   return insertedLog;
 }
 
@@ -2967,7 +3001,14 @@ async function updateCompatibilityLog(
     throw new HttpError(500, "Could not update log");
   }
 
-  await checkForCrisisLanguage(c, existing.patient_id, storedValue, note);
+  await checkForCrisisLanguage(
+    c,
+    existing.patient_id,
+    storedValue,
+    note,
+    linkedObservationTypeForLog(existing.type),
+    existing.id,
+  );
   return updated;
 }
 
@@ -3063,13 +3104,15 @@ async function listInvitesForUser(c: AppContext) {
 }
 
 function entryMeta(log: LogRow) {
+  const crisis = evaluateCompatibilityCrisisLanguage(parseStoredJson(log.value), log.note);
+
   return {
     updatedAt: log.created_at,
     editCount: 0,
     suspiciousEditCount: 0,
     reliabilityLevel: "High" as const,
-    crisisLevel: "none" as const,
-    crisisSummary: null,
+    crisisLevel: crisis.level,
+    crisisSummary: crisis.level === "none" ? null : crisis.summary,
   };
 }
 
@@ -3635,11 +3678,12 @@ async function checkForCrisisLanguage(
   c: AppContext,
   patientId: number,
   value: unknown,
-  note: string | null
+  note: string | null,
+  linkedEntityType: ObservationRow["linked_entity_type"] = null,
+  linkedEntityId: number | null = null
 ): Promise<void> {
-  const text = `${stableStringify(value)} ${note ?? ""}`.toLowerCase();
-  const matchedKeyword = crisisKeywords.find((keyword) => text.includes(keyword));
-  if (!matchedKeyword) {
+  const crisis = evaluateCompatibilityCrisisLanguage(value, note);
+  if (crisis.level === "none") {
     return;
   }
 
@@ -3647,8 +3691,71 @@ async function checkForCrisisLanguage(
     c,
     patientId,
     "crisis",
-    `Potential crisis language detected: "${matchedKeyword}". Immediate clinical review recommended.`
+    crisis.summary
   );
+  await createCrisisObservation(
+    c,
+    patientId,
+    crisis.level,
+    crisis.summary,
+    linkedEntityType,
+    linkedEntityId
+  );
+}
+
+function evaluateCompatibilityCrisisLanguage(value: unknown, note: string | null) {
+  const text = normalizeCrisisText(`${stableStringify(value)} ${note ?? ""}`);
+  if (text.length === 0) {
+    return { level: "none" as const, summary: "" };
+  }
+
+  const hasHistoricalContext = historicalOrQuotedCrisisContext.some((pattern) =>
+    pattern.test(text),
+  );
+
+  if (
+    !hasHistoricalContext &&
+    criticalCrisisPatterns.some((pattern) => pattern.test(text))
+  ) {
+    return {
+      level: "critical" as const,
+      summary:
+        "Patient text suggests active self-harm intent or an immediate need for safety support.",
+    };
+  }
+
+  const matchedKeyword = crisisKeywords.find((keyword) => text.includes(keyword));
+  if (matchedKeyword) {
+    return {
+      level: "critical" as const,
+      summary:
+        "Potential crisis language was detected. Immediate clinical review recommended.",
+    };
+  }
+
+  return { level: "none" as const, summary: "" };
+}
+
+function normalizeCrisisText(value: string) {
+  return value.toLowerCase().replace(/[’`]/g, "'").replace(/\s+/g, " ").trim();
+}
+
+function linkedObservationTypeForLog(
+  type: LogType,
+): ObservationRow["linked_entity_type"] {
+  if (type === "mood") {
+    return "emotion";
+  }
+
+  if (type === "sleep") {
+    return "daily_report";
+  }
+
+  if (type === "weekly_check") {
+    return "weekly_screening";
+  }
+
+  return null;
 }
 
 async function createAlert(
@@ -3662,6 +3769,42 @@ async function createAlert(
      VALUES (?, ?, ?, 0, datetime('now'))`
   )
     .bind(patientId, type, message)
+    .run();
+}
+
+async function createCrisisObservation(
+  c: AppContext,
+  patientId: number,
+  level: "high" | "critical",
+  summary: string,
+  linkedEntityType: ObservationRow["linked_entity_type"],
+  linkedEntityId: number | null,
+): Promise<void> {
+  const patient = await getPatient(c, patientId);
+  await c.env.DB.prepare(
+    `INSERT INTO observations (
+       patient_id,
+       client_patient_id,
+       observation_type,
+       observation,
+       priority,
+       support_worker_name,
+       linked_entity_type,
+       linked_entity_id,
+       system_generated,
+       status,
+       created_at
+     )
+     VALUES (?, ?, 'Alert', ?, ?, 'L.A.M.B Crisis Monitor', ?, ?, 1, 'open', datetime('now'))`
+  )
+    .bind(
+      patientId,
+      patient ? publicPatientId(patient) : null,
+      summary,
+      level === "critical" ? "Critical" : "High",
+      linkedEntityType,
+      linkedEntityId,
+    )
     .run();
 }
 
