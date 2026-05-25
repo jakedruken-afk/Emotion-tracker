@@ -64,12 +64,19 @@ export function EmotionEntryCard({
         <div className="flex items-center gap-3">
           <div className="text-3xl">{emotionMeta[entry.emotion].emoji}</div>
           <div>
-            <p className="text-base font-semibold text-slate-900">{entry.emotion}</p>
-            <p className="text-sm text-slate-500">
-              {format(new Date(entry.timestamp), "MMM d, yyyy 'at' h:mm a")}
-            </p>
-          </div>
-        </div>
+	            <p className="text-base font-semibold text-slate-900">{entry.emotion}</p>
+	            <p className="text-sm text-slate-500">
+	              {entry.occurredAt
+	                ? `Felt ${format(new Date(entry.occurredAt), "MMM d, yyyy 'at' h:mm a")}`
+	                : format(new Date(entry.timestamp), "MMM d, yyyy 'at' h:mm a")}
+	            </p>
+	            {entry.occurredAt ? (
+	              <p className="text-xs text-slate-400">
+	                Recorded {format(new Date(entry.timestamp), "MMM d, h:mm a")}
+	              </p>
+	            ) : null}
+	          </div>
+	        </div>
         <span className={`badge ${emotionMeta[entry.emotion].badgeClass}`}>{entry.emotion}</span>
       </div>
 
@@ -98,9 +105,9 @@ export function EmotionEntryCard({
             {entry.crisisLevel === "critical" ? "Critical alert" : "Safety alert"}
           </span>
         ) : null}
-        {entry.sleepHours != null ? (
-          <span className="badge bg-violet-50 text-violet-800">Sleep {entry.sleepHours}h</span>
-        ) : null}
+	        {entry.sleepHours != null ? (
+	          <span className="badge bg-violet-50 text-violet-800">Sleep {entry.sleepHours}h</span>
+	        ) : null}
         {entry.stressLevel != null ? (
           <span className="badge bg-rose-50 text-rose-800">Stress {entry.stressLevel}/10</span>
         ) : null}

@@ -233,6 +233,57 @@ function createWeeklyScreeningForm(
   };
 }
 
+function todayDateInputValue() {
+  const date = new Date();
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function timeInputValueFromDate(date: Date) {
+  return date.toTimeString().slice(0, 5);
+}
+
+function currentTimeInputValue() {
+  return timeInputValueFromDate(new Date());
+}
+
+function dateInputValueFromTimestamp(timestamp: string | null | undefined) {
+  if (!timestamp) {
+    return todayDateInputValue();
+  }
+
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) {
+    return todayDateInputValue();
+  }
+
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function timeInputValueFromTimestamp(timestamp: string | null | undefined) {
+  if (!timestamp) {
+    return currentTimeInputValue();
+  }
+
+  const date = new Date(timestamp);
+  return Number.isNaN(date.getTime()) ? currentTimeInputValue() : timeInputValueFromDate(date);
+}
+
+function buildOccurredAt(dateValue: string, timeValue: string) {
+  const occurredAt = new Date(`${dateValue}T${timeValue}:00`);
+  return Number.isNaN(occurredAt.getTime()) ? new Date().toISOString() : occurredAt.toISOString();
+}
+
+function isFutureOccurrence(dateValue: string, timeValue: string) {
+  const occurredAt = new Date(`${dateValue}T${timeValue}:00`);
+  return !Number.isNaN(occurredAt.getTime()) && occurredAt.getTime() > Date.now() + 60_000;
+}
+
 function hasMoodDraftData(input: {
   selectedEmotion: EmotionName | null;
   notes: string;
@@ -248,9 +299,9 @@ function hasMoodDraftData(input: {
   moneyChangedToday: boolean;
 }) {
   return (
-    input.editingEmotionId != null ||
-    input.selectedEmotion != null ||
-    input.notes.trim().length > 0 ||
+	    input.editingEmotionId != null ||
+	    input.selectedEmotion != null ||
+	    input.notes.trim().length > 0 ||
     input.missedMedicationName.trim().length > 0 ||
     input.missedMedicationReason !== "" ||
     input.includeLocation ||
@@ -442,6 +493,8 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
   const patientId = user.username;
   const [activeTab, setActiveTab] = useState<PatientWorkspace>("mood");
   const [selectedEmotion, setSelectedEmotion] = useState<EmotionName | null>(null);
+  const [occurredAtDate, setOccurredAtDate] = useState(todayDateInputValue);
+  const [occurredAtTime, setOccurredAtTime] = useState(currentTimeInputValue);
   const [notes, setNotes] = useState("");
   const [sleepHours, setSleepHours] = useState(8);
   const [stressLevel, setStressLevel] = useState(5);
@@ -714,9 +767,11 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
   useEffect(() => {
     refreshSyncState();
 
-    const moodDraft = loadPatientDraft<{
-      selectedEmotion: EmotionName | null;
-      notes: string;
+	    const moodDraft = loadPatientDraft<{
+	      selectedEmotion: EmotionName | null;
+	      occurredAtDate?: string;
+	      occurredAtTime?: string;
+	      notes: string;
       sleepHours: number;
       stressLevel: number;
       cravingLevel: number;
@@ -728,9 +783,11 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
       includeLocation: boolean;
       editingEmotionId: number | null;
     }>(patientId, "mood");
-    if (moodDraft?.value) {
-      setSelectedEmotion(moodDraft.value.selectedEmotion);
-      setNotes(moodDraft.value.notes);
+	    if (moodDraft?.value) {
+	      setSelectedEmotion(moodDraft.value.selectedEmotion);
+	      setOccurredAtDate(moodDraft.value.occurredAtDate ?? todayDateInputValue());
+	      setOccurredAtTime(moodDraft.value.occurredAtTime ?? currentTimeInputValue());
+	      setNotes(moodDraft.value.notes);
       setSleepHours(moodDraft.value.sleepHours);
       setStressLevel(moodDraft.value.stressLevel);
       setCravingLevel(moodDraft.value.cravingLevel);
@@ -822,9 +879,9 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
 
   useEffect(() => {
     if (
-      hasMoodDraftData({
-        selectedEmotion,
-        notes,
+	      hasMoodDraftData({
+	        selectedEmotion,
+	        notes,
         missedMedicationName,
         missedMedicationReason,
         includeLocation,
@@ -837,9 +894,11 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
         moneyChangedToday,
       })
     ) {
-      savePatientDraft(patientId, "mood", {
-        selectedEmotion,
-        notes,
+	      savePatientDraft(patientId, "mood", {
+	        selectedEmotion,
+	        occurredAtDate,
+	        occurredAtTime,
+	        notes,
         sleepHours,
         stressLevel,
         cravingLevel,
@@ -856,9 +915,11 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
 
     clearPatientDraft(patientId, "mood");
   }, [
-    patientId,
-    selectedEmotion,
-    notes,
+	    patientId,
+	    selectedEmotion,
+	    occurredAtDate,
+	    occurredAtTime,
+	    notes,
     sleepHours,
     stressLevel,
     cravingLevel,
@@ -913,10 +974,12 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
     }
   }, [consent?.gpsTracking]);
 
-  const resetMoodForm = () => {
-    setEditingEmotionId(null);
-    setSelectedEmotion(null);
-    setNotes("");
+	  const resetMoodForm = () => {
+	    setEditingEmotionId(null);
+	    setSelectedEmotion(null);
+	    setOccurredAtDate(todayDateInputValue());
+	    setOccurredAtTime(currentTimeInputValue());
+	    setNotes("");
     setSleepHours(8);
     setStressLevel(5);
     setCravingLevel(0);
@@ -944,19 +1007,45 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
     setWeeklyScreening(createEmptyWeeklyScreening());
   };
 
-  const handleMedicationAdherenceChange = (nextValue: MedicationAdherence) => {
+	  const handleMedicationAdherenceChange = (nextValue: MedicationAdherence) => {
     setMedicationAdherence(nextValue);
 
     if (!isMissedMedicationAdherence(nextValue)) {
       setMissedMedicationName("");
       setMissedMedicationReason("");
     }
-  };
+	  };
 
-  const handleSubmit = async () => {
-    if (!selectedEmotion) {
-      return;
-    }
+	  const handlePickEmotion = (emotion: EmotionName) => {
+	    setSelectedEmotion(emotion);
+	    if (editingEmotionId == null) {
+	      setOccurredAtDate(todayDateInputValue());
+	      setOccurredAtTime(currentTimeInputValue());
+	    }
+	  };
+
+	  const handleSubmit = async () => {
+	    if (!selectedEmotion) {
+	      return;
+	    }
+
+	    if (!occurredAtTime) {
+	      toast({
+	        title: "Add when this happened",
+	        description: "Choose the time the feeling happened, even if you are entering it later.",
+	        variant: "info",
+	      });
+	      return;
+	    }
+
+	    if (isFutureOccurrence(occurredAtDate, occurredAtTime)) {
+	      toast({
+	        title: "Choose a time that already happened",
+	        description: "Mood check-ins can be backdated for earlier today, but not set in the future.",
+	        variant: "info",
+	      });
+	      return;
+	    }
 
     const missedMedicationSelected = isMissedMedicationAdherence(medicationAdherence);
 
@@ -1001,10 +1090,11 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
       const method = editingEmotionId != null ? "PATCH" : "POST";
       const url =
         editingEmotionId != null ? `/api/emotions/${editingEmotionId}` : "/api/emotions";
-      const payload = {
-        ...(editingEmotionId == null ? { patientId } : {}),
-        emotion: selectedEmotion,
-        notes,
+	      const payload = {
+	        ...(editingEmotionId == null ? { patientId } : {}),
+	        emotion: selectedEmotion,
+	        occurredAt: buildOccurredAt(occurredAtDate, occurredAtTime),
+	        notes,
         sleepHours,
         stressLevel,
         cravingLevel,
@@ -1388,10 +1478,13 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
     }
   };
 
-  const handleEditEntry = (entry: EmotionRecord) => {
-    setEditingEmotionId(entry.id);
-    setSelectedEmotion(entry.emotion);
-    setNotes(entry.notes ?? "");
+	  const handleEditEntry = (entry: EmotionRecord) => {
+	    const occurrenceSource = entry.occurredAt ?? entry.timestamp;
+	    setEditingEmotionId(entry.id);
+	    setSelectedEmotion(entry.emotion);
+	    setOccurredAtDate(dateInputValueFromTimestamp(occurrenceSource));
+	    setOccurredAtTime(timeInputValueFromTimestamp(occurrenceSource));
+	    setNotes(entry.notes ?? "");
     setSleepHours(entry.sleepHours ?? 8);
     setStressLevel(entry.stressLevel ?? 5);
     setCravingLevel(entry.cravingLevel ?? 0);
@@ -1708,9 +1801,10 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
             <div className="content-stack">
               {activeTab === "mood" ? (
                 <PatientMoodWorkspace
-                  emotionOptions={emotionOptions}
-                  selectedEmotion={selectedEmotion}
-                  notes={notes}
+	                  emotionOptions={emotionOptions}
+	                  selectedEmotion={selectedEmotion}
+	                  occurredAtTime={occurredAtTime}
+	                  notes={notes}
                   sleepHours={sleepHours}
                   stressLevel={stressLevel}
                   cravingLevel={cravingLevel}
@@ -1736,8 +1830,9 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
                   nightSavedToday={nightSavedToday}
                   nightDueNow={nightDueNow}
                   dailyReports={dailyReports}
-                  onPickEmotion={setSelectedEmotion}
-                  onNotesChange={setNotes}
+	                  onPickEmotion={handlePickEmotion}
+	                  onOccurredAtTimeChange={setOccurredAtTime}
+	                  onNotesChange={setNotes}
                   onSleepHoursChange={setSleepHours}
                   onStressLevelChange={setStressLevel}
                   onCravingLevelChange={setCravingLevel}

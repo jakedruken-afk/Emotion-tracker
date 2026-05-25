@@ -8,9 +8,10 @@ const now = new Date().toISOString();
 function createEmotionLog(overrides: Partial<EmotionLog> = {}): EmotionLog {
   return {
     id: 1,
-    patientId: "demo-patient",
-    emotion: "Happy",
-    notes: null,
+	    patientId: "demo-patient",
+	    emotion: "Happy",
+	    occurredAt: null,
+	    notes: null,
     sleepHours: 8,
     stressLevel: 2,
     cravingLevel: 0,

@@ -216,6 +216,28 @@ type ObservationRow = {
   patient_email?: string;
 };
 
+type CriticalAlertEventAction = "viewed" | "opened" | "dismissed" | "snoozed" | "acknowledged";
+
+type CriticalAlertEventRow = {
+  id: number;
+  alert_key: string;
+  patient_id: number;
+  user_id: number;
+  observation_id: number | null;
+  linked_entity_type: "emotion" | "daily_report" | "weekly_screening" | "observation" | "risk" | null;
+  linked_entity_id: number | null;
+  action: CriticalAlertEventAction;
+  note: string | null;
+  snoozed_until: string | null;
+  created_at: string;
+  user_name?: string | null;
+  user_email?: string | null;
+  user_role?: UserRole | null;
+  patient_name?: string | null;
+  patient_code?: string | null;
+  patient_email?: string;
+};
+
 type MedicationRow = {
   id: number;
   patient_id: number;
@@ -1337,6 +1359,14 @@ api.get("/admin/overview", requireAppAdmin(), async (c) => {
   });
 });
 
+api.get("/admin/critical-alert-events", requireAppAdmin(), async (c) => {
+  return handleRoute(c, async () => {
+    const events = await listCriticalAlertEventsForAdmin(c);
+    await auditLog(c, c.var.user.id, null, "admin.critical_alert_events.view");
+    return c.json(events.map(criticalAlertEventRowToRecord));
+  });
+});
+
 api.post("/admin/users", requireAppAdmin(), async (c) => {
   return handleRoute(c, async () => {
     const body = await readJsonObject(c);
@@ -1861,6 +1891,22 @@ api.get("/observations", requireRole("doctor", "support_worker"), async (c) => {
     const observations = await listObservationsForClinician(c);
     await auditLog(c, c.var.user.id, null, "observation.list.view");
     return c.json(observations.map(observationRowToRecord));
+  });
+});
+api.get("/critical-alert-events", requireRole("doctor", "support_worker"), async (c) => {
+  return handleRoute(c, async () => {
+    const events = await listCriticalAlertEventsForUser(c);
+    await auditLog(c, c.var.user.id, null, "critical_alert_events.view");
+    return c.json(events.map(criticalAlertEventRowToRecord));
+  });
+});
+api.post("/critical-alert-events", requireRole("doctor", "support_worker"), async (c) => {
+  return handleRoute(c, async () => {
+    const body = await readJsonObject(c);
+    const patient = await resolveAccessiblePatient(c, requireString(body.patientId, "patientId"));
+    const event = await insertCriticalAlertEvent(c, patient, body);
+    await auditLog(c, c.var.user.id, patient.id, `critical_alert.${event.action}`);
+    return c.json(criticalAlertEventRowToRecord(event), 201);
   });
 });
 api.get("/observations/:patientId", requireRole("doctor", "support_worker"), async (c) => {
@@ -2723,7 +2769,196 @@ async function acknowledgeObservation(c: AppContext, observationId: number, body
     throw new HttpError(500, "Could not acknowledge observation");
   }
 
+  await recordCriticalAlertAcknowledgement(c, updated, body);
+
   return updated;
+}
+
+function readCriticalAlertEventAction(value: unknown): CriticalAlertEventAction {
+  if (
+    value === "viewed" ||
+    value === "opened" ||
+    value === "dismissed" ||
+    value === "snoozed" ||
+    value === "acknowledged"
+  ) {
+    return value;
+  }
+
+  throw new HttpError(400, "action must be viewed, opened, dismissed, snoozed, or acknowledged");
+}
+
+function readCriticalAlertEventLinkedEntityType(
+  value: unknown
+): CriticalAlertEventRow["linked_entity_type"] {
+  if (
+    value === "emotion" ||
+    value === "daily_report" ||
+    value === "weekly_screening" ||
+    value === "observation" ||
+    value === "risk"
+  ) {
+    return value;
+  }
+
+  return null;
+}
+
+async function listCriticalAlertEventsForUser(c: AppContext): Promise<CriticalAlertEventRow[]> {
+  const whereClause = c.var.user.isAppAdmin ? "" : "AND (patients.doctor_id = ? OR patients.support_worker_id = ?)";
+  const stmt = c.env.DB.prepare(
+    `WITH latest_events AS (
+       SELECT alert_key, MAX(id) AS latest_id
+       FROM critical_alert_events
+       WHERE user_id = ?
+       GROUP BY alert_key
+     )
+     SELECT
+       critical_alert_events.*,
+       event_users.name AS user_name,
+       patient_users.patient_code AS patient_code,
+       patient_users.email AS patient_email
+     FROM critical_alert_events
+     INNER JOIN latest_events ON latest_events.latest_id = critical_alert_events.id
+     INNER JOIN patients ON patients.id = critical_alert_events.patient_id
+     INNER JOIN users AS patient_users ON patient_users.id = patients.user_id
+     INNER JOIN users AS event_users ON event_users.id = critical_alert_events.user_id
+     WHERE critical_alert_events.user_id = ?
+       ${whereClause}
+     ORDER BY datetime(critical_alert_events.created_at) DESC, critical_alert_events.id DESC
+     LIMIT 500`
+  );
+
+  try {
+    const rows = c.var.user.isAppAdmin
+      ? await stmt.bind(c.var.user.id, c.var.user.id).all<CriticalAlertEventRow>()
+      : await stmt.bind(c.var.user.id, c.var.user.id, c.var.user.id, c.var.user.id).all<CriticalAlertEventRow>();
+    return rows.results ?? [];
+  } catch (error) {
+    if (error instanceof Error && /no such table: critical_alert_events/i.test(error.message)) {
+      return [];
+    }
+    throw error;
+  }
+}
+
+async function listCriticalAlertEventsForAdmin(c: AppContext): Promise<CriticalAlertEventRow[]> {
+  try {
+    const rows = await c.env.DB.prepare(
+      `SELECT
+         critical_alert_events.*,
+         event_users.name AS user_name,
+         event_users.email AS user_email,
+         event_users.role AS user_role,
+         patient_users.name AS patient_name,
+         patient_users.patient_code AS patient_code,
+         patient_users.email AS patient_email
+       FROM critical_alert_events
+       INNER JOIN patients ON patients.id = critical_alert_events.patient_id
+       INNER JOIN users AS patient_users ON patient_users.id = patients.user_id
+       INNER JOIN users AS event_users ON event_users.id = critical_alert_events.user_id
+       ORDER BY datetime(critical_alert_events.created_at) DESC, critical_alert_events.id DESC
+       LIMIT 200`
+    ).all<CriticalAlertEventRow>();
+
+    return rows.results ?? [];
+  } catch (error) {
+    if (error instanceof Error && /no such table: critical_alert_events/i.test(error.message)) {
+      return [];
+    }
+    throw error;
+  }
+}
+
+async function insertCriticalAlertEvent(
+  c: AppContext,
+  patient: PatientRow,
+  body: JsonObject
+): Promise<CriticalAlertEventRow> {
+  const alertKey = requireString(body.alertKey, "alertKey").slice(0, 240);
+  const action = readCriticalAlertEventAction(body.action);
+  const observationId = optionalInteger(body.observationId, "observationId");
+  const linkedEntityType = readCriticalAlertEventLinkedEntityType(body.linkedEntityType);
+  const linkedEntityId = optionalInteger(body.linkedEntityId, "linkedEntityId");
+
+  if (observationId !== null) {
+    const observation = await getObservationById(c, observationId);
+    if (!observation || observation.patient_id !== patient.id) {
+      throw new HttpError(400, "observationId must belong to the selected patient");
+    }
+  }
+
+  const inserted = await c.env.DB.prepare(
+    `INSERT INTO critical_alert_events (
+       alert_key, patient_id, user_id, observation_id, linked_entity_type,
+       linked_entity_id, action, note, snoozed_until, created_at
+     )
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+     RETURNING *`
+  )
+    .bind(
+      alertKey,
+      patient.id,
+      c.var.user.id,
+      observationId,
+      linkedEntityType,
+      linkedEntityId,
+      action,
+      optionalString(body.note),
+      optionalString(body.snoozedUntil)
+    )
+    .first<CriticalAlertEventRow>()
+    .catch((error) => {
+      if (error instanceof Error && /no such table: critical_alert_events/i.test(error.message)) {
+        throw new HttpError(500, "Critical alert event storage has not been migrated yet");
+      }
+      throw error;
+    });
+
+  if (!inserted) {
+    throw new HttpError(500, "Could not record critical alert event");
+  }
+
+  return {
+    ...inserted,
+    patient_code: patient.patient_code ?? null,
+    patient_email: patient.patient_email,
+    user_name: await displayNameForUser(c, c.var.user.id),
+  };
+}
+
+async function recordCriticalAlertAcknowledgement(
+  c: AppContext,
+  observation: ObservationRow,
+  body: JsonObject
+): Promise<void> {
+  const alertKey = optionalString(body.alertKey) ?? `observation:${observation.id}`;
+  const linkedEntityType = observation.linked_entity_type ?? "observation";
+  const linkedEntityId = observation.linked_entity_id ?? observation.id;
+
+  await c.env.DB.prepare(
+    `INSERT INTO critical_alert_events (
+       alert_key, patient_id, user_id, observation_id, linked_entity_type,
+       linked_entity_id, action, note, created_at
+     )
+     VALUES (?, ?, ?, ?, ?, ?, 'acknowledged', ?, datetime('now'))`
+  )
+    .bind(
+      alertKey,
+      observation.patient_id,
+      c.var.user.id,
+      observation.id,
+      linkedEntityType,
+      linkedEntityId,
+      optionalString(body.ownershipNote) ?? "Critical alert ownership acknowledged."
+    )
+    .run()
+    .catch((error) => {
+      if (error instanceof Error && /no such table: critical_alert_events/i.test(error.message)) {
+        return;
+      }
+      throw error;
+    });
 }
 
 async function medicationsByPatient(c: AppContext, patientId: number): Promise<MedicationRow[]> {
@@ -3124,10 +3359,11 @@ function toEmotionRecord(log: LogRow, patient: PatientRow) {
   const value = parseStoredJson(log.value);
   const body = isJsonObject(value) ? value : {};
   return {
-    id: log.id,
-    patientId: recordPatientId(value, patient),
-    emotion: typeof body.emotion === "string" ? body.emotion : "Worried",
-    notes: typeof body.notes === "string" ? body.notes : null,
+	    id: log.id,
+	    patientId: recordPatientId(value, patient),
+	    emotion: typeof body.emotion === "string" ? body.emotion : "Worried",
+	    occurredAt: typeof body.occurredAt === "string" ? body.occurredAt : null,
+	    notes: typeof body.notes === "string" ? body.notes : null,
     sleepHours: typeof body.sleepHours === "number" ? body.sleepHours : null,
     stressLevel: typeof body.stressLevel === "number" ? body.stressLevel : null,
     cravingLevel: typeof body.cravingLevel === "number" ? body.cravingLevel : null,
@@ -3341,6 +3577,26 @@ function observationRowToRecord(row: ObservationRow) {
     acknowledgedByUserId: row.acknowledged_by_user_id,
     acknowledgedByName: row.acknowledged_by_name,
     acknowledgedAt: row.acknowledged_at,
+    timestamp: row.created_at,
+  };
+}
+
+function criticalAlertEventRowToRecord(row: CriticalAlertEventRow) {
+  return {
+    id: row.id,
+    alertKey: row.alert_key,
+    patientId: publicPatientIdFromScopedRow(row),
+    userId: row.user_id,
+    userName: row.user_name ?? null,
+    userEmail: row.user_email ?? null,
+    userRole: row.user_role ?? null,
+    patientName: row.patient_name ?? null,
+    observationId: row.observation_id,
+    linkedEntityType: row.linked_entity_type,
+    linkedEntityId: row.linked_entity_id,
+    action: row.action,
+    note: row.note,
+    snoozedUntil: row.snoozed_until,
     timestamp: row.created_at,
   };
 }

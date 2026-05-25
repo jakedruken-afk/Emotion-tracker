@@ -266,6 +266,30 @@ CREATE INDEX IF NOT EXISTS idx_observations_linked ON observations(linked_entity
 CREATE INDEX IF NOT EXISTS idx_observations_status ON observations(status);
 CREATE INDEX IF NOT EXISTS idx_observations_created_at ON observations(created_at);
 
+CREATE TABLE IF NOT EXISTS critical_alert_events (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  alert_key           TEXT    NOT NULL,
+  patient_id          INTEGER NOT NULL,
+  user_id             INTEGER NOT NULL,
+  observation_id      INTEGER,
+  linked_entity_type  TEXT,
+  linked_entity_id    INTEGER,
+  action              TEXT    NOT NULL CHECK(action IN ('viewed','opened','dismissed','snoozed','acknowledged')),
+  note                TEXT,
+  snoozed_until       TEXT,
+  created_at          TEXT    NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (patient_id)     REFERENCES patients(id),
+  FOREIGN KEY (user_id)        REFERENCES users(id),
+  FOREIGN KEY (observation_id) REFERENCES observations(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_critical_alert_events_user_alert
+  ON critical_alert_events(user_id, alert_key, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_critical_alert_events_patient_id
+  ON critical_alert_events(patient_id);
+CREATE INDEX IF NOT EXISTS idx_critical_alert_events_observation_id
+  ON critical_alert_events(observation_id);
+
 CREATE TABLE IF NOT EXISTS care_plans (
   patient_id                  INTEGER PRIMARY KEY,
   client_patient_id           TEXT,

@@ -179,9 +179,10 @@ function mapEmotion(row: Record<string, unknown> | undefined): Emotion | undefin
 
   return {
     id: Number(row.id),
-    patientId: String(row.patientId),
-    emotion: row.emotion as EmotionName,
-    notes: row.notes == null ? null : String(row.notes),
+	    patientId: String(row.patientId),
+	    emotion: row.emotion as EmotionName,
+	    occurredAt: row.occurredAt == null ? null : String(row.occurredAt),
+	    notes: row.notes == null ? null : String(row.notes),
     sleepHours: row.sleepHours == null ? null : Number(row.sleepHours),
     stressLevel: row.stressLevel == null ? null : Number(row.stressLevel),
     cravingLevel: row.cravingLevel == null ? null : Number(row.cravingLevel),

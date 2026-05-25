@@ -1,4 +1,4 @@
-import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { format } from "date-fns";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -24,6 +24,9 @@ import {
   priorityOptions,
   sleepQualityLabels,
   type AuthUser,
+  type CriticalAlertEventAction,
+  type CriticalAlertEventRecord,
+  type CriticalAlertLinkedEntityType,
   type DailyReportRecord,
   type EmotionLog,
   type EmotionName,
@@ -154,6 +157,7 @@ type ObservationFormState = {
 };
 
 type CriticalAlertTarget = {
+  alertKey: string;
   patientId: string;
   title: string;
   summary: string;
@@ -162,6 +166,8 @@ type CriticalAlertTarget = {
   targetId: string;
   timestamp: string;
   observationId: number | null;
+  linkedEntityType: CriticalAlertLinkedEntityType | null;
+  linkedEntityId: number | null;
   status: "open" | "acknowledged";
   acknowledgedByName: string | null;
   acknowledgedAt: string | null;
@@ -183,6 +189,7 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
   const [dailyReports, setDailyReports] = useState<DailyReportRecord[]>([]);
   const [screenings, setScreenings] = useState<WeeklyScreeningRecord[]>([]);
   const [observations, setObservations] = useState<ObservationRecord[]>([]);
+  const [criticalAlertEvents, setCriticalAlertEvents] = useState<CriticalAlertEventRecord[]>([]);
   const [isLoadingLogs, setIsLoadingLogs] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [emotionFilter, setEmotionFilter] = useState<EmotionName | "all">("all");
@@ -203,6 +210,7 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
   const [demoMode, setDemoMode] = useState<DemoModeStatus | null>(null);
   const [isAcknowledgingAlert, setIsAcknowledgingAlert] = useState(false);
   const [isResettingDemoScenario, setIsResettingDemoScenario] = useState(false);
+  const recordedCriticalAlertViews = useRef(new Set<string>());
   const { toast } = useToast();
 
   const loadDashboard = async () => {
@@ -215,6 +223,7 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
         nextDailyReports,
         nextScreenings,
         nextObservations,
+        nextCriticalAlertEvents,
         nextPilotMetrics,
         nextDemoMode,
       ] = await Promise.all([
@@ -223,6 +232,7 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
         apiRequest<DailyReportRecord[]>("/api/daily-reports"),
         apiRequest<WeeklyScreeningRecord[]>("/api/weekly-screenings"),
         apiRequest<ObservationRecord[]>("/api/observations"),
+        apiRequest<CriticalAlertEventRecord[]>("/api/critical-alert-events"),
         apiRequest<PilotMetrics>("/api/pilot-metrics"),
         apiRequest<DemoModeStatus>("/api/demo-mode"),
       ]);
@@ -231,6 +241,7 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
       setDailyReports(nextDailyReports);
       setScreenings(nextScreenings);
       setObservations(nextObservations);
+      setCriticalAlertEvents(nextCriticalAlertEvents);
       setPilotMetrics(nextPilotMetrics);
       setDemoMode(nextDemoMode);
     } catch (error) {
@@ -449,6 +460,23 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
     observations,
     patientRiskSnapshots,
   );
+  const latestCriticalAlertEventByKey = useMemo(() => {
+    const eventMap = new Map<string, CriticalAlertEventRecord>();
+    for (const event of criticalAlertEvents) {
+      const existing = eventMap.get(event.alertKey);
+      if (
+        !existing ||
+        new Date(event.timestamp).getTime() > new Date(existing.timestamp).getTime()
+      ) {
+        eventMap.set(event.alertKey, event);
+      }
+    }
+    return eventMap;
+  }, [criticalAlertEvents]);
+  const latestCriticalAlertEvent = criticalAlert
+    ? latestCriticalAlertEventByKey.get(criticalAlert.alertKey) ?? null
+    : null;
+  const isCriticalAlertPopupSuppressed = suppressesCriticalAlertPopup(latestCriticalAlertEvent);
   const criticalAlertPatientDisplayName = criticalAlert
     ? (patientDisplayNameById.get(criticalAlert.patientId) ?? criticalAlert.patientId)
     : selectedPatientDisplayName;
@@ -484,8 +512,41 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
   }, [patientIds, selectedPatientId, setSearchParams]);
 
   useEffect(() => {
-    setShowCriticalAlert(Boolean(criticalAlert && criticalAlert.status !== "acknowledged"));
-  }, [criticalAlert?.patientId, criticalAlert?.status, criticalAlert?.targetId, selectedPatientId]);
+    setShowCriticalAlert(
+      Boolean(
+        criticalAlert &&
+          criticalAlert.status !== "acknowledged" &&
+          !isCriticalAlertPopupSuppressed,
+      ),
+    );
+  }, [
+    criticalAlert?.alertKey,
+    criticalAlert?.patientId,
+    criticalAlert?.status,
+    criticalAlert?.targetId,
+    isCriticalAlertPopupSuppressed,
+    selectedPatientId,
+  ]);
+
+  useEffect(() => {
+    if (!showCriticalAlert || !criticalAlert) {
+      return;
+    }
+
+    if (recordedCriticalAlertViews.current.has(criticalAlert.alertKey)) {
+      return;
+    }
+
+    recordedCriticalAlertViews.current.add(criticalAlert.alertKey);
+    void recordCriticalAlertEvent(
+      criticalAlert,
+      "viewed",
+      "Critical alert popup was shown to this user.",
+      { updateLocalState: false },
+    ).catch(() => {
+      recordedCriticalAlertViews.current.delete(criticalAlert.alertKey);
+    });
+  }, [criticalAlert?.alertKey, showCriticalAlert]);
 
   useEffect(() => {
     if (!pendingScrollTargetId) {
@@ -540,8 +601,51 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
     setSearchParams({ patient: patientId }, { replace: true });
   };
 
+  const recordCriticalAlertEvent = async (
+    alert: CriticalAlertTarget,
+    action: CriticalAlertEventAction,
+    note: string,
+    options: { updateLocalState?: boolean; snoozedUntil?: string | null } = {},
+  ) => {
+    const event = await apiRequest<CriticalAlertEventRecord>("/api/critical-alert-events", {
+      method: "POST",
+      data: {
+        alertKey: alert.alertKey,
+        patientId: alert.patientId,
+        observationId: alert.observationId,
+        linkedEntityType: alert.linkedEntityType,
+        linkedEntityId: alert.linkedEntityId,
+        action,
+        note,
+        snoozedUntil: options.snoozedUntil ?? null,
+      },
+    });
+
+    if (options.updateLocalState !== false) {
+      setCriticalAlertEvents((current) => [
+        event,
+        ...current.filter(
+          (item) => !(item.alertKey === event.alertKey && item.userId === event.userId),
+        ),
+      ]);
+    }
+
+    return event;
+  };
+
   const handleOpenDoctorReview = () => {
     navigate(`/doctor/${encodeURIComponent(selectedPatientId)}`);
+  };
+
+  const openCriticalAlertTarget = (alert: CriticalAlertTarget) => {
+    setShowCriticalAlert(false);
+    if (alert.patientId !== selectedPatientId) {
+      selectPatient(alert.patientId);
+    }
+    setTimeFilter("all");
+    setEmotionFilter("all");
+    setActiveTab(alert.tab);
+    setPendingScrollTargetId(alert.targetId);
   };
 
   const handleOpenCriticalAlert = () => {
@@ -549,14 +653,43 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
       return;
     }
 
-    setShowCriticalAlert(false);
-    if (criticalAlert.patientId !== selectedPatientId) {
-      selectPatient(criticalAlert.patientId);
+    void recordCriticalAlertEvent(
+      criticalAlert,
+      "opened",
+      "Critical alert opened from the support dashboard popup or callout.",
+    ).catch(() => {
+      // Do not block navigation if audit capture is temporarily unavailable.
+    });
+
+    openCriticalAlertTarget(criticalAlert);
+  };
+
+  const handleDismissCriticalAlert = () => {
+    if (!criticalAlert) {
+      return;
     }
-    setTimeFilter("all");
-    setEmotionFilter("all");
-    setActiveTab(criticalAlert.tab);
-    setPendingScrollTargetId(criticalAlert.targetId);
+
+    setShowCriticalAlert(false);
+
+    void recordCriticalAlertEvent(
+      criticalAlert,
+      "dismissed",
+      "Critical alert dismissed for later review from the support dashboard popup.",
+    )
+      .then(() => {
+        toast({
+          title: "Critical alert kept open",
+          description: "The popup will stay quiet for you, but the alert remains visible until someone acknowledges ownership.",
+          variant: "success",
+        });
+      })
+      .catch((error) => {
+        toast({
+          title: "Could not record alert dismissal",
+          description: getErrorMessage(error),
+          variant: "error",
+        });
+      });
   };
 
   const handleAcknowledgeCriticalAlert = async () => {
@@ -571,6 +704,7 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
       await apiRequest(`/api/observations/${criticalAlert.observationId}/acknowledge`, {
         method: "PATCH",
         data: {
+          alertKey: criticalAlert.alertKey,
           ownershipNote: "Support worker acknowledged ownership from the desktop alert flow.",
         },
       });
@@ -582,7 +716,7 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
       });
 
       await loadDashboard();
-      handleOpenCriticalAlert();
+      openCriticalAlertTarget(criticalAlert);
     } catch (error) {
       toast({
         title: "Could not acknowledge the alert",
@@ -822,7 +956,7 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
             onOpen={handleOpenCriticalAlert}
             onAcknowledge={handleAcknowledgeCriticalAlert}
             isAcknowledging={isAcknowledgingAlert}
-            onDismiss={() => setShowCriticalAlert(false)}
+            onDismiss={handleDismissCriticalAlert}
           />
         ) : null}
 
@@ -2282,6 +2416,23 @@ function CriticalAlertCallout({
   );
 }
 
+function suppressesCriticalAlertPopup(event: CriticalAlertEventRecord | null) {
+  if (!event) {
+    return false;
+  }
+
+  if (event.action === "snoozed") {
+    return event.snoozedUntil == null || new Date(event.snoozedUntil).getTime() > Date.now();
+  }
+
+  return (
+    event.action === "viewed" ||
+    event.action === "opened" ||
+    event.action === "dismissed" ||
+    event.action === "acknowledged"
+  );
+}
+
 function getSupportCriticalAlert(
   logs: EmotionLog[],
   dailyReports: DailyReportRecord[],
@@ -2326,20 +2477,23 @@ function getSupportCriticalAlert(
       targetId = `support-screening-${observation.linkedEntityId}`;
     }
 
-    candidates.push({
-      patientId: observation.patientId,
-      title: "Critical Alert",
-      summary: observation.observation,
+	    candidates.push({
+	      alertKey: `observation:${observation.id}`,
+	      patientId: observation.patientId,
+	      title: "Critical Alert",
+	      summary: observation.observation,
       detail: `Alert recorded on ${format(
         new Date(observation.timestamp),
         "MMM d, yyyy 'at' h:mm a",
       )}.`,
       tab,
       targetId,
-      timestamp: observation.timestamp,
-      observationId: observation.id,
-      status: observation.status,
-      acknowledgedByName: observation.acknowledgedByName,
+	      timestamp: observation.timestamp,
+	      observationId: observation.id,
+	      linkedEntityType: observation.linkedEntityType ?? "observation",
+	      linkedEntityId: observation.linkedEntityId ?? observation.id,
+	      status: observation.status,
+	      acknowledgedByName: observation.acknowledgedByName,
       acknowledgedAt: observation.acknowledgedAt,
       ownershipNote: observation.ownershipNote,
       sortTime: new Date(observation.timestamp).getTime(),
@@ -2355,19 +2509,24 @@ function getSupportCriticalAlert(
       continue;
     }
 
-    candidates.push({
-      patientId: log.patientId,
-      title: "Critical Alert",
+	    candidates.push({
+	      alertKey: `emotion:${log.id}`,
+	      patientId: log.patientId,
+	      title: "Critical Alert",
       summary: log.crisisSummary ?? "A patient check-in includes critical safety language.",
-      detail: `Triggered by a ${log.emotion.toLowerCase()} check-in recorded on ${format(
-        new Date(log.timestamp),
-        "MMM d, yyyy 'at' h:mm a",
-      )}.`,
+	      detail: `Triggered by a ${log.emotion.toLowerCase()} check-in ${
+	        log.occurredAt ? "felt" : "recorded"
+	      } on ${format(
+	        new Date(log.occurredAt ?? log.timestamp),
+	        "MMM d, yyyy 'at' h:mm a",
+	      )}.`,
       tab: "timeline",
       targetId: `support-log-${log.id}`,
-      timestamp: log.timestamp,
-      observationId: null,
-      status: "open",
+	      timestamp: log.timestamp,
+	      observationId: null,
+	      linkedEntityType: "emotion",
+	      linkedEntityId: log.id,
+	      status: "open",
       acknowledgedByName: null,
       acknowledgedAt: null,
       ownershipNote: null,
@@ -2384,9 +2543,10 @@ function getSupportCriticalAlert(
       continue;
     }
 
-    candidates.push({
-      patientId: report.patientId,
-      title: "Critical Alert",
+	    candidates.push({
+	      alertKey: `daily_report:${report.id}`,
+	      patientId: report.patientId,
+	      title: "Critical Alert",
       summary: report.crisisSummary ?? "A sleep or meals report includes critical safety language.",
       detail: `Triggered by a ${report.reportType} report recorded on ${format(
         new Date(report.timestamp),
@@ -2394,9 +2554,11 @@ function getSupportCriticalAlert(
       )}.`,
       tab: report.reportType === "night" ? "sleep" : "sleep",
       targetId: `support-report-${report.id}`,
-      timestamp: report.timestamp,
-      observationId: null,
-      status: "open",
+	      timestamp: report.timestamp,
+	      observationId: null,
+	      linkedEntityType: "daily_report",
+	      linkedEntityId: report.id,
+	      status: "open",
       acknowledgedByName: null,
       acknowledgedAt: null,
       ownershipNote: null,
@@ -2413,9 +2575,10 @@ function getSupportCriticalAlert(
       continue;
     }
 
-    candidates.push({
-      patientId: screening.patientId,
-      title: "Critical Alert",
+	    candidates.push({
+	      alertKey: `weekly_screening:${screening.id}`,
+	      patientId: screening.patientId,
+	      title: "Critical Alert",
       summary:
         screening.crisisSummary ??
         "The weekly screen shows a current need for immediate safety support.",
@@ -2425,9 +2588,11 @@ function getSupportCriticalAlert(
       )}.`,
       tab: "screening",
       targetId: `support-screening-${screening.id}`,
-      timestamp: screening.timestamp,
-      observationId: null,
-      status: "open",
+	      timestamp: screening.timestamp,
+	      observationId: null,
+	      linkedEntityType: "weekly_screening",
+	      linkedEntityId: screening.id,
+	      status: "open",
       acknowledgedByName: null,
       acknowledgedAt: null,
       ownershipNote: null,
@@ -2440,9 +2605,10 @@ function getSupportCriticalAlert(
       continue;
     }
 
-    candidates.push({
-      patientId: snapshot.patientId,
-      title: "Critical Risk",
+	    candidates.push({
+	      alertKey: `risk:${snapshot.patientId}:${snapshot.lastSeenAt ?? "latest"}`,
+	      patientId: snapshot.patientId,
+	      title: "Critical Risk",
       summary: snapshot.summary,
       detail: snapshot.lastSeenAt
         ? `Critical risk was calculated from patient data last seen on ${format(
@@ -2452,9 +2618,11 @@ function getSupportCriticalAlert(
         : "Critical risk was calculated from the available patient data.",
       tab: "queue",
       targetId: `support-risk-${snapshot.patientId}`,
-      timestamp: snapshot.lastSeenAt ?? new Date().toISOString(),
-      observationId: null,
-      status: "open",
+	      timestamp: snapshot.lastSeenAt ?? new Date().toISOString(),
+	      observationId: null,
+	      linkedEntityType: "risk",
+	      linkedEntityId: null,
+	      status: "open",
       acknowledgedByName: null,
       acknowledgedAt: null,
       ownershipNote: null,
@@ -2611,10 +2779,17 @@ function EmotionLogCard({
                 {emotionMeta[log.emotion].statusLabel}
               </span>
             </div>
-            <p className="mt-1 text-sm text-slate-500">
-              {format(new Date(log.timestamp), "MMM d, yyyy 'at' h:mm a")}
-            </p>
-            <p className="mt-1 text-sm text-slate-500">Patient: {patientName}</p>
+	            <p className="mt-1 text-sm text-slate-500">
+	              {log.occurredAt
+	                ? `Felt ${format(new Date(log.occurredAt), "MMM d, yyyy 'at' h:mm a")}`
+	                : format(new Date(log.timestamp), "MMM d, yyyy 'at' h:mm a")}
+	            </p>
+	            {log.occurredAt ? (
+	              <p className="mt-1 text-xs text-slate-400">
+	                Recorded {format(new Date(log.timestamp), "MMM d, h:mm a")}
+	              </p>
+	            ) : null}
+	            <p className="mt-1 text-sm text-slate-500">Patient: {patientName}</p>
             {patientName !== log.patientId ? (
               <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
                 Patient ID: {log.patientId}
@@ -2640,9 +2815,17 @@ function EmotionLogCard({
       ) : null}
 
       <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        <DetailTile label="Data richness" value={getCheckInRichness(log)} />
-        <DetailTile
-          label="Sleep"
+	        <DetailTile label="Data richness" value={getCheckInRichness(log)} />
+	        <DetailTile
+	          label="Emotion time"
+	          value={
+	            log.occurredAt
+	              ? format(new Date(log.occurredAt), "MMM d, h:mm a")
+	              : "Same as recorded time"
+	          }
+	        />
+	        <DetailTile
+	          label="Sleep"
           value={log.sleepHours != null ? `${log.sleepHours} hours` : "Not recorded"}
         />
         <DetailTile

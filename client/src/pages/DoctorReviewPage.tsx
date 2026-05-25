@@ -1634,10 +1634,12 @@ function getDoctorCriticalAlert(
 
     candidates.push({
       summary: entry.crisisSummary ?? "A patient check-in includes critical safety language.",
-      detail: `Triggered by a ${entry.emotion.toLowerCase()} check-in recorded on ${format(
-        new Date(entry.timestamp),
-        "MMM d, yyyy 'at' h:mm a",
-      )}.`,
+	      detail: `Triggered by a ${entry.emotion.toLowerCase()} check-in ${
+	        entry.occurredAt ? "felt" : "recorded"
+	      } on ${format(
+	        new Date(entry.occurredAt ?? entry.timestamp),
+	        "MMM d, yyyy 'at' h:mm a",
+	      )}.`,
       targetId: `doctor-entry-${entry.id}`,
       timestamp: entry.timestamp,
       status: "open",

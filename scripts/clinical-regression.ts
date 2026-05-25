@@ -33,9 +33,10 @@ function daysAgo(days: number, hourOffset = 0) {
 function createEmotionRecord(overrides: Partial<EmotionRecord> = {}): EmotionRecord {
   return {
     id: 1,
-    patientId,
-    emotion: "Happy",
-    notes: null,
+	    patientId,
+	    emotion: "Happy",
+	    occurredAt: null,
+	    notes: null,
     sleepHours: 8,
     stressLevel: 2,
     cravingLevel: 1,

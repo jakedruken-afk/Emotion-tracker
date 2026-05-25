@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { format } from "date-fns";
 import {
+  AlertTriangle,
   Copy,
   KeyRound,
   Link as LinkIcon,
@@ -16,6 +17,7 @@ import {
 import {
   formatDisplayName,
   type AuthUser,
+  type CriticalAlertEventRecord,
   type InviteCreateResponse,
   type InviteRecord,
   type PatientSummary,
@@ -51,6 +53,12 @@ type AdminOverview = {
   };
 };
 
+type AdminCriticalAlertEvent = CriticalAlertEventRecord & {
+  userEmail?: string | null;
+  userRole?: "patient" | "doctor" | "support_worker" | null;
+  patientName?: string | null;
+};
+
 type StaffOption = StaffSummary & {
   backendRole?: "doctor" | "support_worker";
   isAppAdmin?: boolean;
@@ -79,6 +87,7 @@ const emptyInviteForm = {
 export default function AdminPage({ user, onLogout }: AdminPageProps) {
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [staff, setStaff] = useState<StaffOption[]>([]);
+  const [criticalAlertEvents, setCriticalAlertEvents] = useState<AdminCriticalAlertEvent[]>([]);
   const [staffForm, setStaffForm] = useState(emptyStaffForm);
   const [inviteForm, setInviteForm] = useState(emptyInviteForm);
   const [latestInviteUrl, setLatestInviteUrl] = useState<string | null>(null);
@@ -107,16 +116,23 @@ export default function AdminPage({ user, onLogout }: AdminPageProps) {
       ),
     [overview?.invites],
   );
+  const acknowledgedAlertEvents = useMemo(
+    () => criticalAlertEvents.filter((event) => event.action === "acknowledged"),
+    [criticalAlertEvents],
+  );
+  const recentCriticalAlertEvents = criticalAlertEvents.slice(0, 12);
 
   const loadAdmin = async () => {
     setIsLoading(true);
     try {
-      const [nextOverview, nextStaff] = await Promise.all([
+      const [nextOverview, nextStaff, nextCriticalAlertEvents] = await Promise.all([
         apiRequest<AdminOverview>("/api/admin/overview"),
         apiRequest<StaffOption[]>("/api/staff"),
+        apiRequest<AdminCriticalAlertEvent[]>("/api/admin/critical-alert-events"),
       ]);
       setOverview(nextOverview);
       setStaff(nextStaff);
+      setCriticalAlertEvents(nextCriticalAlertEvents);
       setInviteForm((current) => ({
         ...current,
         doctorId: current.doctorId || String(nextStaff.find((member) => member.backendRole === "doctor")?.id ?? ""),
@@ -389,6 +405,12 @@ export default function AdminPage({ user, onLogout }: AdminPageProps) {
                 detail={`${doctors.length} doctors and ${supportWorkers.length} support workers.`}
                 tone="coral"
               />
+              <MetricTile
+                label="Alert audit"
+                value={acknowledgedAlertEvents.length}
+                detail={`${criticalAlertEvents.length} recent critical-alert events recorded.`}
+                tone="gold"
+              />
             </div>
           </div>
         </section>
@@ -602,6 +624,58 @@ export default function AdminPage({ user, onLogout }: AdminPageProps) {
 
         <section className="surface-panel mt-6">
           <div className="flex items-start gap-3">
+            <AlertTriangle className="mt-0.5 h-5 w-5 text-rose-600" />
+            <div>
+              <h2 className="section-title">Critical alert audit</h2>
+              <p className="section-copy">
+                See who viewed, opened, dismissed, or acknowledged beta safety alerts.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-6 grid gap-3">
+            {isLoading ? (
+              <EmptyPanel message="Loading critical alert audit..." />
+            ) : recentCriticalAlertEvents.length > 0 ? (
+              recentCriticalAlertEvents.map((event) => (
+                <div key={event.id} className="timeline-card">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={`badge ${criticalAlertActionMeta[event.action].className}`}>
+                          {criticalAlertActionMeta[event.action].label}
+                        </span>
+                        {event.action === "acknowledged" ? (
+                          <span className="badge bg-emerald-100 text-emerald-900">
+                            Ownership recorded
+                          </span>
+                        ) : null}
+                      </div>
+                      <p className="mt-3 text-sm font-semibold text-slate-900">
+                        {formatAlertActor(event)} {criticalAlertActionMeta[event.action].verb}{" "}
+                        a critical alert for {formatAlertPatient(event)}.
+                      </p>
+                      <p className="mt-1 text-xs leading-5 text-slate-500">
+                        {format(new Date(event.timestamp), "MMM d, yyyy 'at' h:mm a")} ·{" "}
+                        {event.alertKey}
+                      </p>
+                    </div>
+                    {event.note ? (
+                      <p className="max-w-xl rounded-[18px] bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-600">
+                        {event.note}
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+              ))
+            ) : (
+              <EmptyPanel message="No critical alert audit events have been recorded yet." />
+            )}
+          </div>
+        </section>
+
+        <section className="surface-panel mt-6">
+          <div className="flex items-start gap-3">
             <Users className="mt-0.5 h-5 w-5 text-emerald-600" />
             <div>
               <h2 className="section-title">Accounts</h2>
@@ -744,4 +818,47 @@ function EmptyPanel({ message }: { message: string }) {
       {message}
     </div>
   );
+}
+
+const criticalAlertActionMeta: Record<
+  CriticalAlertEventRecord["action"],
+  { label: string; verb: string; className: string }
+> = {
+  viewed: {
+    label: "Viewed",
+    verb: "was shown",
+    className: "bg-sky-100 text-sky-900",
+  },
+  opened: {
+    label: "Opened",
+    verb: "opened",
+    className: "bg-indigo-100 text-indigo-900",
+  },
+  dismissed: {
+    label: "Dismissed",
+    verb: "dismissed for later",
+    className: "bg-amber-100 text-amber-900",
+  },
+  snoozed: {
+    label: "Snoozed",
+    verb: "snoozed",
+    className: "bg-amber-100 text-amber-900",
+  },
+  acknowledged: {
+    label: "Acknowledged",
+    verb: "acknowledged ownership of",
+    className: "bg-emerald-100 text-emerald-900",
+  },
+};
+
+function formatAlertActor(event: AdminCriticalAlertEvent) {
+  const name = event.userName ?? "Unknown user";
+  const email = event.userEmail ? ` (${event.userEmail})` : "";
+  const role = event.userRole ? `, ${event.userRole.replace("_", " ")}` : "";
+  return `${name}${email}${role}`;
+}
+
+function formatAlertPatient(event: AdminCriticalAlertEvent) {
+  const name = event.patientName ?? "unknown patient";
+  return event.patientId === name ? name : `${name} (${event.patientId})`;
 }

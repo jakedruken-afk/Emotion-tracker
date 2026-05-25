@@ -44,6 +44,7 @@ const emotionMeta: Record<
 type MoodWorkspaceProps = {
   emotionOptions: readonly EmotionName[];
   selectedEmotion: EmotionName | null;
+  occurredAtTime: string;
   notes: string;
   sleepHours: number;
   stressLevel: number;
@@ -71,6 +72,7 @@ type MoodWorkspaceProps = {
   nightDueNow: boolean;
   dailyReports: DailyReportRecord[];
   onPickEmotion: (emotion: EmotionName) => void;
+  onOccurredAtTimeChange: (value: string) => void;
   onNotesChange: (value: string) => void;
   onSleepHoursChange: (value: number) => void;
   onStressLevelChange: (value: number) => void;
@@ -86,9 +88,10 @@ type MoodWorkspaceProps = {
 };
 
 export default function PatientMoodWorkspace({
-  emotionOptions,
-  selectedEmotion,
-  notes,
+	  emotionOptions,
+	  selectedEmotion,
+	  occurredAtTime,
+	  notes,
   sleepHours,
   stressLevel,
   cravingLevel,
@@ -113,9 +116,10 @@ export default function PatientMoodWorkspace({
   morningDueNow,
   nightSavedToday,
   nightDueNow,
-  dailyReports,
-  onPickEmotion,
-  onNotesChange,
+	  dailyReports,
+	  onPickEmotion,
+	  onOccurredAtTimeChange,
+	  onNotesChange,
   onSleepHoursChange,
   onStressLevelChange,
   onCravingLevelChange,
@@ -168,31 +172,47 @@ export default function PatientMoodWorkspace({
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-5xl">{emotionMeta[selectedEmotion].emoji}</p>
-                <h4 className="mt-3 text-2xl font-bold text-slate-900">
-                  {editingEntryId != null ? `Editing ${selectedEmotion} check-in` : `You selected ${selectedEmotion}`}
-                </h4>
-              </div>
-              <span className={`badge ${emotionMeta[selectedEmotion].badgeClass}`}>
-                {selectedEmotion}
-              </span>
-            </div>
+	                <h4 className="mt-3 text-2xl font-bold text-slate-900">
+	                  {editingEntryId != null ? `Editing ${selectedEmotion} check-in` : `You selected ${selectedEmotion}`}
+	                </h4>
+	              </div>
+	              <span className={`badge ${emotionMeta[selectedEmotion].badgeClass}`}>
+	                {selectedEmotion}
+	              </span>
+	            </div>
+	
+	            <div className="mt-6 grid gap-5 md:grid-cols-[minmax(0,1fr)_220px]">
+	              <div>
+	                <label className="label" htmlFor="notes">
+	                  Notes (optional)
+	                </label>
+	                <textarea
+	                  id="notes"
+	                  className="input min-h-32 resize-y"
+	                  maxLength={500}
+	                  value={notes}
+	                  onChange={(event) => onNotesChange(event.target.value)}
+	                  placeholder="Tell us what is on your mind..."
+	                />
+	                <p className="mt-2 text-right text-xs text-slate-500">{notes.length}/500</p>
+	              </div>
+	
+	              <Field
+	                label="When did this happen?"
+	                htmlFor="occurred-at-time"
+	                caption="Use this if you are recording something from earlier today."
+	              >
+	                <input
+	                  id="occurred-at-time"
+	                  type="time"
+	                  className="input"
+	                  value={occurredAtTime}
+	                  onChange={(event) => onOccurredAtTimeChange(event.target.value)}
+	                />
+	              </Field>
+	            </div>
 
-            <div className="mt-6">
-              <label className="label" htmlFor="notes">
-                Notes (optional)
-              </label>
-              <textarea
-                id="notes"
-                className="input min-h-32 resize-y"
-                maxLength={500}
-                value={notes}
-                onChange={(event) => onNotesChange(event.target.value)}
-                placeholder="Tell us what is on your mind..."
-              />
-              <p className="mt-2 text-right text-xs text-slate-500">{notes.length}/500</p>
-            </div>
-
-            <div className="mt-6 warm-panel">
+	            <div className="mt-6 warm-panel">
               <p className="mini-heading">Extra Details</p>
               <p className="section-copy mt-3">
                 These answers help your care team compare patterns over time.

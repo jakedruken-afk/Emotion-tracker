@@ -105,6 +105,23 @@ export type ObservationLinkedEntityType =
 export const observationStatusOptions = ["open", "acknowledged"] as const;
 export type ObservationStatus = (typeof observationStatusOptions)[number];
 
+export const criticalAlertEventActionOptions = [
+  "viewed",
+  "opened",
+  "dismissed",
+  "snoozed",
+  "acknowledged",
+] as const;
+export type CriticalAlertEventAction = (typeof criticalAlertEventActionOptions)[number];
+
+export const criticalAlertLinkedEntityTypeOptions = [
+  ...entryEntityTypeOptions,
+  "observation",
+  "risk",
+] as const;
+export type CriticalAlertLinkedEntityType =
+  (typeof criticalAlertLinkedEntityTypeOptions)[number];
+
 export const demoScenarioIdOptions = [
   "stable-low-risk",
   "worsening-routine",
@@ -254,6 +271,7 @@ const emotionLocationShape = {
 const insertEmotionStructuredShape = {
   patientId: z.string().trim().min(1, "Patient ID is required"),
   emotion: z.enum(emotionOptions),
+  occurredAt: z.string().min(1).optional().nullable(),
   notes: z
     .string()
     .trim()
@@ -280,6 +298,7 @@ const insertEmotionStructuredShape = {
 const emotionStructuredShape = {
   patientId: z.string().trim().min(1, "Patient ID is required"),
   emotion: z.enum(emotionOptions),
+  occurredAt: z.string().nullable(),
   notes: z.string().nullable(),
   sleepHours: z.number().finite().min(0).max(24).nullable(),
   stressLevel: z.number().int().min(0).max(10).nullable(),
@@ -457,6 +476,26 @@ export const observationSchema = z.object({
 export type InsertObservation = z.infer<typeof insertObservationSchema>;
 export type AcknowledgeObservation = z.infer<typeof acknowledgeObservationSchema>;
 export type ObservationRecord = z.infer<typeof observationSchema>;
+
+export const criticalAlertEventSchema = z.object({
+  id: z.number().int().positive(),
+  alertKey: z.string().min(1),
+  patientId: z.string().min(1),
+  userId: z.number().int().positive(),
+  userName: z.string().nullable(),
+  userEmail: z.string().nullable().optional(),
+  userRole: z.enum(["patient", "doctor", "support_worker"]).nullable().optional(),
+  patientName: z.string().nullable().optional(),
+  observationId: z.number().int().positive().nullable(),
+  linkedEntityType: z.enum(criticalAlertLinkedEntityTypeOptions).nullable(),
+  linkedEntityId: z.number().int().positive().nullable(),
+  action: z.enum(criticalAlertEventActionOptions),
+  note: z.string().nullable(),
+  snoozedUntil: z.string().nullable(),
+  timestamp: z.string(),
+});
+
+export type CriticalAlertEventRecord = z.infer<typeof criticalAlertEventSchema>;
 
 export const emotionLogSchema = emotionRecordSchemaBase
   .extend({
