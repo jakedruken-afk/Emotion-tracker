@@ -306,6 +306,11 @@ Compliance reminders for clinical use:
 ## Mobile Pilot
 
 Patient-first mobile and pilot-safety guidance lives in [docs/MOBILE_PILOT.md](docs/MOBILE_PILOT.md).
+Pitch-readiness, website beta testing, and sanitized feedback capture live in:
+
+- [docs/PITCH_READINESS_PLAN.md](docs/PITCH_READINESS_PLAN.md)
+- [docs/BETA_TEST_SCRIPT.md](docs/BETA_TEST_SCRIPT.md)
+- [docs/BETA_FEEDBACK_LOG_TEMPLATE.md](docs/BETA_FEEDBACK_LOG_TEMPLATE.md)
 
 Useful Android commands:
 
