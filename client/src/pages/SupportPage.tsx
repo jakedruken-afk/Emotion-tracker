@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent 
 import { format } from "date-fns";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
+  AlertTriangle,
   ClipboardList,
   Copy,
   Download,
@@ -205,6 +206,7 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
     supportWorkerName,
   });
   const [showCriticalAlert, setShowCriticalAlert] = useState(false);
+  const [queueReviewPatientId, setQueueReviewPatientId] = useState<string | null>(null);
   const [pendingScrollTargetId, setPendingScrollTargetId] = useState<string | null>(null);
   const [pilotMetrics, setPilotMetrics] = useState<PilotMetrics | null>(null);
   const [demoMode, setDemoMode] = useState<DemoModeStatus | null>(null);
@@ -460,6 +462,12 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
     observations,
     patientRiskSnapshots,
   );
+  const queueReviewSnapshot = queueReviewPatientId
+    ? patientRiskSnapshots.find((snapshot) => snapshot.patientId === queueReviewPatientId) ?? null
+    : null;
+  const queueReviewPatientName = queueReviewSnapshot
+    ? patientDisplayNameById.get(queueReviewSnapshot.patientId) ?? queueReviewSnapshot.patientId
+    : "";
   const latestCriticalAlertEventByKey = useMemo(() => {
     const eventMap = new Map<string, CriticalAlertEventRecord>();
     for (const event of criticalAlertEvents) {
@@ -599,6 +607,23 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
     setSelectedPatientId(patientId);
     setForm((current) => ({ ...current, patientId }));
     setSearchParams({ patient: patientId }, { replace: true });
+  };
+
+  const handleQueuePatientReview = (snapshot: PatientRiskSnapshot) => {
+    selectPatient(snapshot.patientId);
+    setQueueReviewPatientId(snapshot.patientId);
+  };
+
+  const openQueueReviewSection = (snapshot: PatientRiskSnapshot, tab: SupportWorkspace) => {
+    selectPatient(snapshot.patientId);
+    setQueueReviewPatientId(null);
+    setTimeFilter("all");
+    setEmotionFilter("all");
+    setActiveTab(tab);
+
+    if (tab === "queue") {
+      setPendingScrollTargetId("support-priority-explanation");
+    }
   };
 
   const recordCriticalAlertEvent = async (
@@ -960,6 +985,23 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
           />
         ) : null}
 
+        {queueReviewSnapshot ? (
+          <PriorityReviewOverlay
+            snapshot={queueReviewSnapshot}
+            patientName={queueReviewPatientName}
+            onClose={() => setQueueReviewPatientId(null)}
+            onOpenQueue={() => openQueueReviewSection(queueReviewSnapshot, "queue")}
+            onOpenRelated={() =>
+              openQueueReviewSection(queueReviewSnapshot, getPriorityReviewTab(queueReviewSnapshot))
+            }
+            onOpenDoctorReview={() => {
+              selectPatient(queueReviewSnapshot.patientId);
+              setQueueReviewPatientId(null);
+              navigate(`/doctor/${encodeURIComponent(queueReviewSnapshot.patientId)}`);
+            }}
+          />
+        ) : null}
+	
         {criticalAlert && criticalAlert.status !== "acknowledged" ? (
           <CriticalAlertCallout
             className="mb-6 ring-2 ring-rose-200"
@@ -1086,7 +1128,7 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
           </div>
 
           <div className="content-stack">
-            <section className="surface-panel">
+	                <section id="support-priority-explanation" className="surface-panel">
               <SectionHeader
                 eyebrow="Safety Boundary"
                 title="Staffed-hours monitoring only"
@@ -1247,15 +1289,15 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
                 <div className="mt-6 grid gap-4 lg:grid-cols-2">
                   {patientRiskSnapshots.length > 0 ? (
                     patientRiskSnapshots.map((snapshot) => (
-                      <QueueCard
-                        key={snapshot.patientId}
-                        snapshot={snapshot}
-                        selected={snapshot.patientId === selectedPatientId}
-                        patientName={
-                          patientDisplayNameById.get(snapshot.patientId) ?? snapshot.patientId
-                        }
-                        onSelect={() => selectPatient(snapshot.patientId)}
-                      />
+	                      <QueueCard
+	                        key={snapshot.patientId}
+	                        snapshot={snapshot}
+	                        selected={snapshot.patientId === selectedPatientId}
+	                        patientName={
+	                          patientDisplayNameById.get(snapshot.patientId) ?? snapshot.patientId
+	                        }
+	                        onSelect={() => handleQueuePatientReview(snapshot)}
+	                      />
                     ))
                   ) : (
                     <EmptyPanel
@@ -2275,6 +2317,133 @@ function SectionHeader({
       <h3 className="section-title mt-3">{title}</h3>
       <p className="section-copy">{copy}</p>
     </div>
+	  );
+	}
+
+function PriorityReviewOverlay({
+  snapshot,
+  patientName,
+  onClose,
+  onOpenQueue,
+  onOpenRelated,
+  onOpenDoctorReview,
+}: {
+  snapshot: PatientRiskSnapshot;
+  patientName: string;
+  onClose: () => void;
+  onOpenQueue: () => void;
+  onOpenRelated: () => void;
+  onOpenDoctorReview: () => void;
+}) {
+  const relatedTab = getPriorityReviewTab(snapshot);
+  const topReasons = snapshot.reasons.length > 0 ? snapshot.reasons : ["No major review reason was detected."];
+  const changes =
+    snapshot.whatChanged.length > 0
+      ? snapshot.whatChanged
+      : ["No major week-over-week change signal was detected."];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/45 px-4 py-10">
+      <div className="w-full max-w-4xl rounded-[28px] border border-slate-200 bg-white p-5 shadow-2xl md:p-7">
+        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+          <div>
+            <p className="mini-heading text-rose-700">Priority Review</p>
+            <h2 className="mt-3 text-3xl font-semibold text-slate-950">
+              Why {patientName} is ranked {snapshot.score}
+            </h2>
+            {patientName !== snapshot.patientId ? (
+              <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Patient ID: {snapshot.patientId}
+              </p>
+            ) : null}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={`badge ${riskMeta[snapshot.riskLevel].badgeClass}`}>
+              {snapshot.riskLevel} priority
+            </span>
+            <span className="badge bg-slate-100 text-slate-700">Score {snapshot.score}</span>
+          </div>
+        </div>
+
+        <p className="mt-5 text-sm leading-6 text-slate-700">{snapshot.summary}</p>
+
+        <div className="mt-5 grid gap-4 md:grid-cols-3">
+          <div className="rounded-[24px] border border-slate-200 bg-slate-50 px-4 py-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Main reasons
+            </p>
+            <ul className="mt-3 space-y-2 text-sm leading-6 text-slate-700">
+              {topReasons.slice(0, 5).map((reason) => (
+                <li key={reason}>- {reason}</li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="rounded-[24px] border border-slate-200 bg-white px-4 py-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Recent changes
+            </p>
+            <ul className="mt-3 space-y-2 text-sm leading-6 text-slate-700">
+              {changes.slice(0, 4).map((change) => (
+                <li key={change}>- {change}</li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="rounded-[24px] border border-slate-200 bg-white px-4 py-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Suggested next steps
+            </p>
+            <ul className="mt-3 space-y-2 text-sm leading-6 text-slate-700">
+              {snapshot.suggestedActions.slice(0, 4).map((action) => (
+                <li key={action}>- {action}</li>
+              ))}
+            </ul>
+          </div>
+        </div>
+
+        <div className="mt-5 flex flex-wrap gap-2">
+          <span className="badge bg-slate-100 text-slate-700">
+            Reliability: {snapshot.reliabilityLevel}
+          </span>
+          {snapshot.dominantEmotion ? (
+            <span className="badge bg-white text-slate-700">
+              Dominant mood: {snapshot.dominantEmotion}
+            </span>
+          ) : null}
+          {snapshot.crisisLevel !== "none" ? (
+            <span className="badge bg-rose-100 text-rose-900">
+              {snapshot.crisisLevel === "critical" ? "Critical safety alert" : "Safety alert"}
+            </span>
+          ) : null}
+          {snapshot.mismatchSummary ? (
+            <span className="badge bg-amber-100 text-amber-900">Perspective mismatch</span>
+          ) : null}
+        </div>
+
+        {snapshot.crisisSummary || snapshot.mismatchSummary ? (
+          <div className="mt-5 rounded-[24px] border border-rose-100 bg-rose-50 px-4 py-4 text-sm leading-6 text-rose-900">
+            {snapshot.crisisSummary ?? snapshot.mismatchSummary}
+          </div>
+        ) : null}
+
+        <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+          <button type="button" className="btn btn-primary flex-1" onClick={onOpenRelated}>
+            <AlertTriangle className="h-4 w-4" />
+            Open {getPriorityReviewTabLabel(relatedTab)}
+          </button>
+          <button type="button" className="btn btn-secondary flex-1" onClick={onOpenQueue}>
+            Show Full Queue Explanation
+          </button>
+          <button type="button" className="btn btn-secondary flex-1" onClick={onOpenDoctorReview}>
+            Open Doctor Review
+          </button>
+          <button type="button" className="btn btn-secondary flex-1" onClick={onClose}>
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -2675,6 +2844,54 @@ function formatPatientReferences(text: string, patientCode: string, patientName:
   return patientName === patientCode ? text : text.split(patientCode).join(patientName);
 }
 
+function getPriorityReviewTab(snapshot: PatientRiskSnapshot): SupportWorkspace {
+  const reviewText = [
+    snapshot.crisisSummary,
+    snapshot.mismatchSummary,
+    ...snapshot.reasons,
+    ...snapshot.whatChanged,
+    ...snapshot.suggestedActions,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  if (
+    snapshot.crisisLevel !== "none" ||
+    /weekly|screen|safety|self-harm|harm|critical|urgent/.test(reviewText)
+  ) {
+    return "screening";
+  }
+
+  if (/sleep|meal|meals|appetite|wake|rest|bed/.test(reviewText)) {
+    return "sleep";
+  }
+
+  if (/observation|mismatch|support worker|perspective/.test(reviewText)) {
+    return "notes";
+  }
+
+  return "timeline";
+}
+
+function getPriorityReviewTabLabel(tab: SupportWorkspace) {
+  switch (tab) {
+    case "screening":
+      return "Safety Review";
+    case "sleep":
+      return "Sleep Reports";
+    case "notes":
+      return "Notes";
+    case "overview":
+      return "Summary";
+    case "queue":
+      return "Priority Queue";
+    case "timeline":
+    default:
+      return "Mood Timeline";
+  }
+}
+
 function QueueCard({
   snapshot,
   patientName,
@@ -2744,11 +2961,15 @@ function QueueCard({
           ) : null}
         </div>
 
-        <p className="mt-4 text-sm text-slate-700">
-          {snapshot.suggestedActions[0] ?? "Continue routine monitoring."}
-        </p>
+	        <p className="mt-4 text-sm text-slate-700">
+	          {snapshot.suggestedActions[0] ?? "Continue routine monitoring."}
+	        </p>
 
-        <p className="mt-4 text-xs text-slate-500">
+	        <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
+	          Click to review why this patient is ranked here
+	        </p>
+	
+	        <p className="mt-4 text-xs text-slate-500">
           {snapshot.lastSeenAt
             ? `Last seen ${format(new Date(snapshot.lastSeenAt), "MMM d, yyyy 'at' h:mm a")}`
             : "No entries recorded yet"}
