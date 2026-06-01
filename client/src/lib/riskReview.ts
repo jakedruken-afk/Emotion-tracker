@@ -761,38 +761,291 @@ function collectEmergencyFollowUpEvents(
   return [
     ...recentLogs
       .filter((log) => hasEmergencyInterventionText(log.notes))
-      .map((log) => ({
-        id: `emotion:${log.id}`,
-        source: "Mood check-in" as const,
-        summary: "Emergency mental-health or crisis-response involvement was mentioned in a mood check-in.",
-        eventAt: log.occurredAt ?? log.timestamp,
-        recordedAt: log.timestamp,
-        linkedEntityType: "emotion" as const,
-        linkedEntityId: log.id,
-      })),
+      .flatMap((log) =>
+        buildEmergencyFollowUpEventsFromText({
+          text: log.notes,
+          fallbackEventAt: log.occurredAt ?? log.timestamp,
+          recordedAt: log.timestamp,
+          source: "Mood check-in",
+          summary:
+            "Emergency mental-health or crisis-response involvement was mentioned in a mood check-in.",
+          linkedEntityType: "emotion",
+          linkedEntityId: log.id,
+        }),
+      ),
     ...recentReports
       .filter((report) => hasEmergencyInterventionText(report.notes, report.mealsNote))
-      .map((report) => ({
-        id: `daily_report:${report.id}`,
-        source: "Sleep or meals report" as const,
-        summary: "Emergency mental-health or crisis-response involvement was mentioned in a sleep or meals report.",
-        eventAt: report.timestamp,
-        recordedAt: report.timestamp,
-        linkedEntityType: "daily_report" as const,
-        linkedEntityId: report.id,
-      })),
+      .flatMap((report) =>
+        buildEmergencyFollowUpEventsFromText({
+          text: `${report.notes ?? ""} ${report.mealsNote ?? ""}`,
+          fallbackEventAt: report.timestamp,
+          recordedAt: report.timestamp,
+          source: "Sleep or meals report",
+          summary:
+            "Emergency mental-health or crisis-response involvement was mentioned in a sleep or meals report.",
+          linkedEntityType: "daily_report",
+          linkedEntityId: report.id,
+        }),
+      ),
     ...recentObservations
       .filter((observation) => hasEmergencyInterventionText(observation.observation))
-      .map((observation) => ({
-        id: `observation:${observation.id}`,
-        source: "Support observation" as const,
-        summary: "Emergency mental-health or crisis-response involvement was mentioned in a support observation.",
-        eventAt: observation.timestamp,
-        recordedAt: observation.timestamp,
-        linkedEntityType: "observation" as const,
-        linkedEntityId: observation.id,
-      })),
+      .flatMap((observation) =>
+        buildEmergencyFollowUpEventsFromText({
+          text: observation.observation,
+          fallbackEventAt: observation.timestamp,
+          recordedAt: observation.timestamp,
+          source: "Support observation",
+          summary:
+            "Emergency mental-health or crisis-response involvement was mentioned in a support observation.",
+          linkedEntityType: "observation",
+          linkedEntityId: observation.id,
+        }),
+      ),
   ].sort((left, right) => toTimestamp(right.eventAt) - toTimestamp(left.eventAt));
+}
+
+function buildEmergencyFollowUpEventsFromText(input: {
+  text: string | null | undefined;
+  fallbackEventAt: string;
+  recordedAt: string;
+  source: EmergencyFollowUpEvent["source"];
+  summary: string;
+  linkedEntityType: EmergencyFollowUpEvent["linkedEntityType"];
+  linkedEntityId: number;
+}): EmergencyFollowUpEvent[] {
+  const resolvedEvents = resolveEmergencyEventTimes(input.text, input.fallbackEventAt);
+
+  if (resolvedEvents.length === 0) {
+    return [
+      {
+        id: `${input.linkedEntityType}:${input.linkedEntityId}`,
+        source: input.source,
+        summary: input.summary,
+        eventAt: input.fallbackEventAt,
+        recordedAt: input.recordedAt,
+        linkedEntityType: input.linkedEntityType,
+        linkedEntityId: input.linkedEntityId,
+      },
+    ];
+  }
+
+  return resolvedEvents.map((event, index) => ({
+    id: `${input.linkedEntityType}:${input.linkedEntityId}:event:${index + 1}`,
+    source: input.source,
+    summary: event.summary ?? input.summary,
+    eventAt: event.eventAt,
+    recordedAt: input.recordedAt,
+    linkedEntityType: input.linkedEntityType,
+    linkedEntityId: input.linkedEntityId,
+  }));
+}
+
+function resolveEmergencyEventTimes(
+  text: string | null | undefined,
+  fallbackEventAt: string,
+) {
+  const normalized = normalizeReviewText(text ?? "");
+  const referenceDate = new Date(fallbackEventAt);
+  if (normalized.length === 0 || !Number.isFinite(referenceDate.getTime())) {
+    return [];
+  }
+
+  const events: Array<{ eventAt: string; summary: string | null }> = [];
+  const detectedSpans: Array<{ start: number; end: number }> = [];
+
+  for (const match of normalized.matchAll(relativeEventPattern)) {
+    const dayText = match.groups?.day;
+    const timeText = match.groups?.time;
+    if (!dayText || !timeText || match.index == null) {
+      continue;
+    }
+
+    const eventDate = resolveRelativeEventDate(dayText, referenceDate);
+    const time = parseEventTime(timeText, normalized, match.index);
+    if (!eventDate || !time) {
+      continue;
+    }
+
+    events.push({
+      eventAt: combineDateAndTime(eventDate, time.hour, time.minute).toISOString(),
+      summary: `Emergency mental-health or crisis-response involvement reported for ${dayText} around ${time.label}.`,
+    });
+    detectedSpans.push({ start: match.index, end: match.index + match[0].length });
+  }
+
+  for (const match of normalized.matchAll(timeThenRelativeEventPattern)) {
+    const timeText = match.groups?.time;
+    const dayText = match.groups?.day;
+    if (!dayText || !timeText || match.index == null) {
+      continue;
+    }
+
+    const matchEnd = match.index + match[0].length;
+    if (
+      detectedSpans.some((span) =>
+        rangesOverlap(span.start, span.end, match.index!, matchEnd),
+      )
+    ) {
+      continue;
+    }
+
+    const eventDate = resolveRelativeEventDate(dayText, referenceDate);
+    const time = parseEventTime(timeText, normalized, match.index);
+    if (!eventDate || !time) {
+      continue;
+    }
+
+    events.push({
+      eventAt: combineDateAndTime(eventDate, time.hour, time.minute).toISOString(),
+      summary: `Emergency mental-health or crisis-response involvement reported for ${dayText} around ${time.label}.`,
+    });
+  }
+
+  return dedupeEmergencyEvents(events);
+}
+
+const relativeEventPattern =
+  /\b(?<day>yesterday|today|monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:\s+(?:morning|afternoon|evening|night))?(?:\s+(?:at|around|about))?\s+(?<time>\d{1,2}(?::\d{2})?(?:\s*(?:am|pm))?(?:\s*[-–]\s*\d{1,2}(?::\d{2})?(?:\s*(?:am|pm))?)?)(?!\s+(?:on\s+)?(?:yesterday|today|monday|tuesday|wednesday|thursday|friday|saturday|sunday))/g;
+
+const timeThenRelativeEventPattern =
+  /\b(?<time>\d{1,2}(?::\d{2})?(?:\s*(?:am|pm))?(?:\s*[-–]\s*\d{1,2}(?::\d{2})?(?:\s*(?:am|pm))?)?)\s+(?:on\s+)?(?<day>yesterday|today|monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:\s+(?:morning|afternoon|evening|night))?\b/g;
+
+function resolveRelativeEventDate(dayText: string, referenceDate: Date) {
+  const normalizedDay = dayText.toLowerCase();
+  const date = new Date(referenceDate);
+  date.setHours(0, 0, 0, 0);
+
+  if (normalizedDay === "today") {
+    return date;
+  }
+
+  if (normalizedDay === "yesterday") {
+    date.setDate(date.getDate() - 1);
+    return date;
+  }
+
+  const targetDay = weekdayToNumber(normalizedDay);
+  if (targetDay == null) {
+    return null;
+  }
+
+  const currentDay = date.getDay();
+  let daysBack = currentDay - targetDay;
+  if (daysBack <= 0) {
+    daysBack += 7;
+  }
+
+  date.setDate(date.getDate() - daysBack);
+  return date;
+}
+
+function weekdayToNumber(dayText: string) {
+  switch (dayText) {
+    case "sunday":
+      return 0;
+    case "monday":
+      return 1;
+    case "tuesday":
+      return 2;
+    case "wednesday":
+      return 3;
+    case "thursday":
+      return 4;
+    case "friday":
+      return 5;
+    case "saturday":
+      return 6;
+    default:
+      return null;
+  }
+}
+
+function parseEventTime(
+  timeText: string,
+  fullText: string,
+  matchIndex: number,
+) {
+  const firstTime = timeText.split(/[-–]/)[0]?.trim();
+  if (!firstTime) {
+    return null;
+  }
+
+  const match = firstTime.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/);
+  if (!match) {
+    return null;
+  }
+
+  const hourNumber = Number(match[1]);
+  const minuteNumber = match[2] ? Number(match[2]) : 0;
+  const explicitPeriod = match[3] as "am" | "pm" | undefined;
+  const nearbyText = fullText.slice(
+    Math.max(0, matchIndex - 30),
+    matchIndex + timeText.length + 30,
+  );
+  const inferredPeriod = explicitPeriod ?? inferEventTimePeriod(nearbyText);
+
+  if (
+    !Number.isInteger(hourNumber) ||
+    !Number.isInteger(minuteNumber) ||
+    hourNumber < 1 ||
+    hourNumber > 12 ||
+    minuteNumber < 0 ||
+    minuteNumber > 59
+  ) {
+    return null;
+  }
+
+  let hour = hourNumber;
+  if (inferredPeriod === "pm" && hour < 12) {
+    hour += 12;
+  }
+
+  if (inferredPeriod === "am" && hour === 12) {
+    hour = 0;
+  }
+
+  return {
+    hour,
+    minute: minuteNumber,
+    label: `${hourNumber}:${String(minuteNumber).padStart(2, "0")} ${inferredPeriod?.toUpperCase() ?? ""}`.trim(),
+  };
+}
+
+function inferEventTimePeriod(text: string): "am" | "pm" | null {
+  if (/\b(am|morning)\b/.test(text)) {
+    return "am";
+  }
+
+  if (/\b(pm|afternoon|evening|night|tonight)\b/.test(text)) {
+    return "pm";
+  }
+
+  return null;
+}
+
+function combineDateAndTime(date: Date, hour: number, minute: number) {
+  const combined = new Date(date);
+  combined.setHours(hour, minute, 0, 0);
+  return combined;
+}
+
+function rangesOverlap(leftStart: number, leftEnd: number, rightStart: number, rightEnd: number) {
+  return leftStart < rightEnd && rightStart < leftEnd;
+}
+
+function dedupeEmergencyEvents(
+  events: Array<{ eventAt: string; summary: string | null }>,
+) {
+  const seen = new Set<string>();
+  return events.filter((event) => {
+    const key = event.eventAt;
+    if (seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
 }
 
 function buildPerspectiveMismatch(

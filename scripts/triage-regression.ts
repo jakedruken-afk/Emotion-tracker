@@ -289,6 +289,38 @@ function runRiskSnapshotChecks() {
     "emergency response follow-up should keep the source for appointments",
   );
 
+  const relativeEmergencyResponseSnapshot = buildPatientRiskSnapshot(
+    "relative-emergency-response-demo",
+    [
+      createEmotionLog({
+        patientId: "relative-emergency-response-demo",
+        notes:
+          "Emergency mental health crisis unit was called. Happened 9:30-10 on Saturday night and yesterday 7pm.",
+        occurredAt: "2026-06-01T11:53:00.000Z",
+        timestamp: "2026-06-01T12:58:36.000Z",
+        crisisLevel: "none",
+        crisisSummary: null,
+      }),
+    ],
+    [],
+    [],
+    [],
+    { asOf: "2026-06-01T13:00:00.000Z" },
+  );
+  assert.equal(
+    relativeEmergencyResponseSnapshot.emergencyFollowUpEvents.length,
+    2,
+    "relative emergency wording should create two dated follow-up events",
+  );
+  assert.deepEqual(
+    relativeEmergencyResponseSnapshot.emergencyFollowUpEvents.map((event) => event.eventAt),
+    [
+      new Date(2026, 4, 31, 19, 0, 0, 0).toISOString(),
+      new Date(2026, 4, 30, 21, 30, 0, 0).toISOString(),
+    ],
+    "Saturday night and yesterday 7pm should resolve against the mood log date in local time",
+  );
+
   const preCrisisCutoff = "2026-06-01T12:57:59.000Z";
   const postCrisisAngryEntry = createEmotionLog({
     id: 99,
