@@ -625,7 +625,7 @@ export default function DoctorReviewPage({
                 detail={
                   risk.whatChanged.length > 0
                     ? risk.whatChanged.join(" ")
-                    : "No major change signal detected."
+                    : "No major warning signal detected."
                 }
                 tone="coral"
               />
@@ -688,8 +688,19 @@ export default function DoctorReviewPage({
               <span className="badge bg-slate-100 text-slate-700">
                 Reliability {risk.reliabilityLevel}
               </span>
+              <span className="badge bg-slate-100 text-slate-700">
+                Confidence {risk.confidence}
+              </span>
+              <span className="badge bg-white text-slate-700">
+                72h {risk.acute72hScore} / 7d {risk.trend7dScore}
+              </span>
               {risk.mismatchSummary ? (
                 <span className="badge bg-amber-100 text-amber-900">Perspective mismatch</span>
+              ) : null}
+              {risk.deteriorationWatch ? (
+                <span className="badge bg-orange-100 text-orange-900">
+                  Deterioration Watch
+                </span>
               ) : null}
               {risk.crisisLevel !== "none" ? (
                 <span className="badge bg-rose-100 text-rose-900">
@@ -707,7 +718,19 @@ export default function DoctorReviewPage({
               <p className="mt-2 text-sm leading-6 text-slate-700">
                 {weeklyReview.keyChanges.length > 0
                   ? weeklyReview.keyChanges.join(" ")
-                  : "No major change signal was detected."}
+                  : "No major warning signal was detected."}
+              </p>
+            </div>
+            <div className="timeline-card">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Early-warning window
+              </p>
+              <p className="mt-2 text-sm leading-6 text-slate-700">
+                72-hour score {risk.acute72hScore}/100. 7-day trend score {risk.trend7dScore}/100.
+                Confidence is {risk.confidence.toLowerCase()}.
+                {risk.lastCheckInGapDays != null
+                  ? ` Last check-in was about ${Math.floor(risk.lastCheckInGapDays)} day(s) ago.`
+                  : " No patient check-in has been recorded yet."}
               </p>
             </div>
             <div className="timeline-card">
@@ -737,6 +760,27 @@ export default function DoctorReviewPage({
                 {risk.suggestedActions.join(" ")}
               </p>
             </div>
+            {risk.emergencyFollowUpEvents.length > 0 ? (
+              <div className="timeline-card">
+                <p className="text-xs font-semibold uppercase tracking-wide text-rose-700">
+                  Emergency response follow-up
+                </p>
+                <div className="mt-3 space-y-3 text-sm leading-6 text-slate-700">
+                  {risk.emergencyFollowUpEvents.slice(0, 3).map((event) => (
+                    <div key={event.id}>
+                      <p className="font-semibold text-slate-900">
+                        {format(new Date(event.eventAt), "MMM d, yyyy 'at' h:mm a")}
+                      </p>
+                      <p>{event.summary}</p>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        Source: {event.source}. Recorded{" "}
+                        {format(new Date(event.recordedAt), "MMM d, yyyy 'at' h:mm a")}.
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
 
           <div className="mt-4 grid gap-4 lg:grid-cols-2">
@@ -943,6 +987,19 @@ export default function DoctorReviewPage({
 
                 <div className="mt-6 grid gap-4">
                   <SummaryRow label="Risk score" value={String(risk.score)} />
+                  <SummaryRow
+                    label="Early-warning scores"
+                    value={`72h ${risk.acute72hScore}/100 / 7d ${risk.trend7dScore}/100`}
+                  />
+                  <SummaryRow label="Confidence" value={risk.confidence} />
+                  <SummaryRow
+                    label="Emergency follow-up events"
+                    value={
+                      risk.emergencyFollowUpEvents.length > 0
+                        ? `${risk.emergencyFollowUpEvents.length} event${risk.emergencyFollowUpEvents.length === 1 ? "" : "s"} on file`
+                        : "None flagged"
+                    }
+                  />
                   <SummaryRow
                     label="Last data seen"
                     value={
@@ -1763,6 +1820,7 @@ function formatRevisionFieldLabel(key: string) {
     stressLevel: "Stress level",
     cravingLevel: "Craving level",
     substanceUseToday: "Substance use today",
+    substanceUsed: "Substance used",
     moneyChangedToday: "Big money change",
     medicationAdherence: "Medication adherence",
     missedMedicationName: "Missed medication",

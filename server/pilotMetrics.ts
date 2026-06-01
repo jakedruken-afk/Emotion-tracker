@@ -108,6 +108,7 @@ export function buildPilotMetrics(): PilotMetrics {
         stress_level AS stressLevel,
         craving_level AS cravingLevel,
         substance_use_today AS substanceUseToday,
+        substance_used AS substanceUsed,
         money_changed_today AS moneyChangedToday,
         medication_adherence AS medicationAdherence,
         missed_medication_name AS missedMedicationName,
@@ -211,6 +212,7 @@ export function buildPilotMetrics(): PilotMetrics {
         cravingLevel: row.cravingLevel == null ? null : Number(row.cravingLevel),
         substanceUseToday:
           row.substanceUseToday == null ? null : Boolean(row.substanceUseToday),
+        substanceUsed: row.substanceUsed == null ? null : String(row.substanceUsed),
         moneyChangedToday:
           row.moneyChangedToday == null ? null : Boolean(row.moneyChangedToday),
         medicationAdherence: normalizeMedicationAdherence(row.medicationAdherence),

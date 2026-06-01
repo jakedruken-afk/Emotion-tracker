@@ -7,13 +7,13 @@ const config: CapacitorConfig = {
   bundledWebRuntime: false,
   server: {
     hostname: "localhost",
-    androidScheme: "http",
-    cleartext: true,
+    androidScheme: "https",
+    cleartext: false,
   },
   android: {
     allowMixedContent: false,
     captureInput: true,
-    webContentsDebuggingEnabled: true,
+    webContentsDebuggingEnabled: false,
   },
   ios: {
     contentInset: "never",

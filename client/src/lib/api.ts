@@ -53,12 +53,6 @@ function getConfiguredApiBaseUrl() {
     return "";
   }
 
-  const platform = getCapacitorRuntime()?.getPlatform?.();
-
-  if (platform === "android" || (!platform && /Android/i.test(window.navigator.userAgent))) {
-    return "http://10.0.2.2:3001";
-  }
-
   return cloudflareApiBaseUrl;
 }
 
@@ -185,7 +179,7 @@ export async function apiRequest<T>(url: string, options: ApiRequestOptions = {}
 
     if (isNativeRuntime()) {
       throw new Error(
-        "The mobile app is not connected to the API yet. Rebuild with VITE_API_BASE_URL, or use the Android emulator fallback host.",
+        "The mobile app is not connected to the API yet. Rebuild with VITE_API_BASE_URL or use the production app URL.",
       );
     }
 

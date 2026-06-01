@@ -44,17 +44,27 @@ export function buildDoctorVisitSummary(input: DoctorReviewInput) {
       )}.`
     : "No clinician care plan is on file.";
   const latestObservation = input.observations[0];
+  const emergencyFollowUpText =
+    input.risk.emergencyFollowUpEvents.length > 0
+      ? input.risk.emergencyFollowUpEvents
+          .slice(0, 4)
+          .map(
+            (event) =>
+              `${format(new Date(event.eventAt), "MMM d, yyyy 'at' h:mm a")} (${event.source})`,
+          )
+          .join("; ")
+      : "No emergency response events were flagged in recent patient data.";
 
   return [
     "DOCTOR REVIEW NOTE",
     `Patient: ${input.patientId}`,
     `Risk: ${input.risk.riskLevel}${
       input.risk.crisisSummary ? ` | ${input.risk.crisisSummary}` : ""
-    }`,
+    } | 72h ${input.risk.acute72hScore}/100 | 7d ${input.risk.trend7dScore}/100 | Confidence ${input.risk.confidence}`,
     `What is happening: ${
       weeklyReview.keyChanges.length > 0
         ? weeklyReview.keyChanges.join("; ")
-        : "No major change signal was detected."
+        : "No major warning signal was detected."
     }`,
     `Why it matters: ${
       input.risk.reasons.length > 0
@@ -65,6 +75,7 @@ export function buildDoctorVisitSummary(input: DoctorReviewInput) {
     `Reliability: ${input.risk.reliabilityLevel}. ${input.risk.reliabilitySummary}${
       input.risk.mismatchSummary ? ` ${input.risk.mismatchSummary}` : ""
     }`,
+    `Emergency response follow-up: ${emergencyFollowUpText}`,
     `Medication context: ${activeMedicationText}`,
     `Care plan: ${carePlanText}`,
     `Latest support note: ${
@@ -129,6 +140,14 @@ export function buildDoctorQuestions(input: DoctorReviewInput) {
 
   if (input.risk.mismatchLevel !== "none") {
     questions.add("Ask about the difference between patient self-report and recent support observations so the current picture can be clarified.");
+  }
+
+  if (input.risk.deteriorationWatch) {
+    questions.add("Ask what happened during the gap after the last concerning check-in and whether extra support is needed now.");
+  }
+
+  if (input.risk.emergencyFollowUpEvents.length > 0) {
+    questions.add("Review each dated emergency/crisis-response event, who attended, what follow-up occurred, and what safety plan changes are needed.");
   }
 
   if (input.carePlan?.goals) {

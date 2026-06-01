@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { format } from "date-fns";
 import { BookOpen, LogOut } from "lucide-react";
 import {
@@ -64,6 +64,11 @@ import PatientWeeklyScreenWorkspace, {
 
 const patientTabs = [
   {
+    id: "history",
+    label: "Dashboard",
+    description: "Charts and recent records",
+  },
+  {
     id: "mood",
     label: "Daily Check-In",
     description: "Record how you feel right now",
@@ -79,16 +84,41 @@ const patientTabs = [
     description: "Safety and symptom review",
   },
   {
-    id: "history",
-    label: "History",
-    description: "See recent mood and sleep entries",
-  },
-  {
     id: "settings",
     label: "Settings",
     description: "Help, comfort, and privacy",
   },
 ] as const;
+
+const homeMoodOptions: Record<
+  EmotionName,
+  {
+    emoji: string;
+    helper: string;
+    className: string;
+  }
+> = {
+  Happy: {
+    emoji: "\u{1F60A}",
+    helper: "Doing okay",
+    className: "from-emerald-50 to-teal-50 text-emerald-900 border-emerald-100",
+  },
+  Sad: {
+    emoji: "\u{1F622}",
+    helper: "Feeling low",
+    className: "from-sky-50 to-cyan-50 text-sky-900 border-sky-100",
+  },
+  Angry: {
+    emoji: "\u{1F620}",
+    helper: "Frustrated",
+    className: "from-rose-50 to-orange-50 text-rose-900 border-rose-100",
+  },
+  Worried: {
+    emoji: "\u{1F630}",
+    helper: "Anxious",
+    className: "from-amber-50 to-orange-50 text-amber-900 border-amber-100",
+  },
+};
 
 type PatientWorkspace = (typeof patientTabs)[number]["id"];
 
@@ -296,6 +326,7 @@ function hasMoodDraftData(input: {
   stressLevel: number;
   cravingLevel: number;
   substanceUseToday: boolean;
+  substanceUsed: string;
   moneyChangedToday: boolean;
 }) {
   return (
@@ -310,6 +341,7 @@ function hasMoodDraftData(input: {
     input.stressLevel !== 5 ||
     input.cravingLevel !== 0 ||
     input.substanceUseToday ||
+    input.substanceUsed.trim().length > 0 ||
     input.moneyChangedToday
   );
 }
@@ -471,6 +503,9 @@ function getClientCrisisLevelHint(...values: Array<string | null | undefined>) {
   }
 
   if (
+    /emergency mental health crisis.*called|mental health crisis.*called|crisis team.*came|crisis response.*came|mobile crisis.*came|crisis.*called.*twice|911.*called|called.*911|ambulance.*came|police.*came|wellness check|welfare check/.test(
+      normalizedText,
+    ) ||
     /dont belong on this earth|do not belong on this earth|want to die|end my life|kill myself|cant keep myself safe|can t keep myself safe/.test(
       normalizedText,
     )
@@ -491,7 +526,9 @@ function getClientCrisisLevelHint(...values: Array<string | null | undefined>) {
 
 export default function PatientPage({ user, onLogout }: PatientPageProps) {
   const patientId = user.username;
-  const [activeTab, setActiveTab] = useState<PatientWorkspace>("mood");
+  const workspaceStartRef = useRef<HTMLDivElement | null>(null);
+  const homeMoodScrollPendingRef = useRef(false);
+  const [activeTab, setActiveTab] = useState<PatientWorkspace>("history");
   const [selectedEmotion, setSelectedEmotion] = useState<EmotionName | null>(null);
   const [occurredAtDate, setOccurredAtDate] = useState(todayDateInputValue);
   const [occurredAtTime, setOccurredAtTime] = useState(currentTimeInputValue);
@@ -500,6 +537,7 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
   const [stressLevel, setStressLevel] = useState(5);
   const [cravingLevel, setCravingLevel] = useState(0);
   const [substanceUseToday, setSubstanceUseToday] = useState(false);
+  const [substanceUsed, setSubstanceUsed] = useState("");
   const [moneyChangedToday, setMoneyChangedToday] = useState(false);
   const [medicationAdherence, setMedicationAdherence] =
     useState<MedicationAdherence>("not_prescribed");
@@ -776,6 +814,7 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
       stressLevel: number;
       cravingLevel: number;
       substanceUseToday: boolean;
+      substanceUsed?: string;
       moneyChangedToday: boolean;
       medicationAdherence: MedicationAdherence;
       missedMedicationName: string;
@@ -792,6 +831,7 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
       setStressLevel(moodDraft.value.stressLevel);
       setCravingLevel(moodDraft.value.cravingLevel);
       setSubstanceUseToday(moodDraft.value.substanceUseToday);
+      setSubstanceUsed(moodDraft.value.substanceUsed ?? "");
       setMoneyChangedToday(moodDraft.value.moneyChangedToday);
       setMedicationAdherence(moodDraft.value.medicationAdherence);
       setMissedMedicationName(moodDraft.value.missedMedicationName);
@@ -891,6 +931,7 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
         stressLevel,
         cravingLevel,
         substanceUseToday,
+        substanceUsed,
         moneyChangedToday,
       })
     ) {
@@ -903,6 +944,7 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
         stressLevel,
         cravingLevel,
         substanceUseToday,
+        substanceUsed,
         moneyChangedToday,
         medicationAdherence,
         missedMedicationName,
@@ -924,6 +966,7 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
     stressLevel,
     cravingLevel,
     substanceUseToday,
+    substanceUsed,
     moneyChangedToday,
     medicationAdherence,
     missedMedicationName,
@@ -984,6 +1027,7 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
     setStressLevel(5);
     setCravingLevel(0);
     setSubstanceUseToday(false);
+    setSubstanceUsed("");
     setMoneyChangedToday(false);
     setMedicationAdherence("not_prescribed");
     setMissedMedicationName("");
@@ -1015,6 +1059,14 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
       setMissedMedicationReason("");
     }
 	  };
+
+  const handleSubstanceUseTodayChange = (nextValue: boolean) => {
+    setSubstanceUseToday(nextValue);
+
+    if (!nextValue) {
+      setSubstanceUsed("");
+    }
+  };
 
 	  const handlePickEmotion = (emotion: EmotionName) => {
 	    setSelectedEmotion(emotion);
@@ -1062,6 +1114,15 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
       return;
     }
 
+    if (substanceUseToday && substanceUsed.trim().length === 0) {
+      toast({
+        title: "Add the substance used",
+        description: "When substances were used, please write which substance was used.",
+        variant: "info",
+      });
+      return;
+    }
+
     setIsSaving(true);
 
     try {
@@ -1099,6 +1160,7 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
         stressLevel,
         cravingLevel,
         substanceUseToday,
+        substanceUsed: substanceUseToday ? substanceUsed : null,
         moneyChangedToday,
         medicationAdherence,
         missedMedicationName: missedMedicationSelected ? missedMedicationName : null,
@@ -1113,6 +1175,7 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
         crisisLevelHint: getClientCrisisLevelHint(
           notes,
           missedMedicationSelected ? missedMedicationName : "",
+          substanceUseToday ? substanceUsed : "",
         ),
       });
 
@@ -1489,6 +1552,7 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
     setStressLevel(entry.stressLevel ?? 5);
     setCravingLevel(entry.cravingLevel ?? 0);
     setSubstanceUseToday(entry.substanceUseToday ?? false);
+    setSubstanceUsed(entry.substanceUsed ?? "");
     setMoneyChangedToday(entry.moneyChangedToday ?? false);
     setMedicationAdherence(entry.medicationAdherence ?? "not_prescribed");
     setMissedMedicationName(entry.missedMedicationName ?? "");
@@ -1544,6 +1608,41 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
   const handleOpenTutorial = () => {
     setIsTutorialOpen(true);
   };
+
+  const scrollToWorkspace = () => {
+    window.setTimeout(() => {
+      const target =
+        document.getElementById("patient-check-in-workspace") ?? workspaceStartRef.current;
+
+      if (!target) {
+        return;
+      }
+
+      const topbarHeight =
+        document.querySelector(".app-topbar")?.getBoundingClientRect().height ?? 0;
+      const targetTop = target.getBoundingClientRect().top + window.scrollY - topbarHeight - 12;
+
+      window.scrollTo({
+        top: Math.max(0, targetTop),
+        behavior: patientLocalSettings.reduceMotion ? "auto" : "smooth",
+      });
+    }, 80);
+  };
+
+  const handleStartMoodFromHome = (emotion: EmotionName) => {
+    homeMoodScrollPendingRef.current = true;
+    handlePickEmotion(emotion);
+    setActiveTab("mood");
+  };
+
+  useEffect(() => {
+    if (!homeMoodScrollPendingRef.current || activeTab !== "mood" || !selectedEmotion) {
+      return;
+    }
+
+    homeMoodScrollPendingRef.current = false;
+    scrollToWorkspace();
+  }, [activeTab, patientLocalSettings.reduceMotion, selectedEmotion]);
 
   const handleCloseTutorial = () => {
     markPatientTutorialSeen(patientId);
@@ -1604,29 +1703,40 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
       }`}
     >
       <header className="app-topbar">
-        <div className="app-container flex items-center justify-between gap-4 py-4">
+        <div className="app-container patient-header-container flex items-center justify-between gap-4 py-4">
           <BrandMark
             variant="compact"
             showTagline={false}
             context="Patient Workspace"
             subtitle={`Welcome, ${formatDisplayName(user)}`}
+            className="patient-header-brand"
           />
 
-          <div className="flex shrink-0 items-center justify-end gap-2">
-            <button type="button" className="btn btn-secondary" onClick={handleOpenTutorial}>
+          <div className="patient-header-actions flex shrink-0 items-center justify-end gap-2">
+            <button
+              type="button"
+              className="btn btn-secondary patient-header-button"
+              onClick={handleOpenTutorial}
+              aria-label="Open tutorial"
+            >
               <BookOpen className="h-4 w-4" />
-              <span className="hidden sm:inline">Tutorial</span>
-              <span className="sm:hidden">Help</span>
+              <span className="patient-header-button-label patient-help-full">Tutorial</span>
+              <span className="patient-header-button-label patient-help-short">Help</span>
             </button>
-            <button type="button" className="btn btn-secondary" onClick={onLogout}>
+            <button
+              type="button"
+              className="btn btn-secondary patient-header-button"
+              onClick={onLogout}
+              aria-label="Sign out"
+            >
               <LogOut className="h-4 w-4" />
-              Sign Out
+              <span className="patient-header-button-label">Sign Out</span>
             </button>
           </div>
         </div>
       </header>
 
-      <main className="app-container py-6 md:py-8">
+      <main className="app-container patient-main-container py-6 md:py-8">
         {isLoadingConsent ? (
           <section className="panel mx-auto max-w-3xl p-8 md:p-10">
             <p className="mini-heading">Preparing your workspace</p>
@@ -1647,12 +1757,41 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
             <section className="hero-panel">
               <div className="hero-grid">
                 <div className="hero-copy">
-                  <p className="eyebrow">Daily Care Tracking</p>
+                  <p className="eyebrow">Start Here</p>
                   <h2 className="hero-title text-balance">
-                    One calm place to check in, track sleep, complete weekly screens, and keep your care team updated.
+                    How are you feeling right now?
                   </h2>
                   <p className="hero-text">
-                    This layout is built to feel simpler on phones and clearer on larger screens. Pick the task you want to work on, then focus on one section at a time.
+                    Tap a mood. L.A.M.B will open the check-in and keep the rest simple.
+                  </p>
+
+                  <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-2">
+                    {emotionOptions.map((emotion) => {
+                      const option = homeMoodOptions[emotion];
+                      const isSelected = selectedEmotion === emotion && activeTab === "mood";
+
+                      return (
+                        <button
+                          key={emotion}
+                          type="button"
+                          className={`rounded-[22px] border bg-gradient-to-br px-4 py-4 text-left shadow-sm transition hover:-translate-y-1 ${option.className} ${
+                            isSelected ? "ring-2 ring-teal-400" : "ring-0"
+                          }`}
+                          onClick={() => handleStartMoodFromHome(emotion)}
+                          aria-pressed={isSelected}
+                        >
+                          <span className="text-3xl" aria-hidden="true">
+                            {option.emoji}
+                          </span>
+                          <span className="mt-3 block text-base font-bold">{emotion}</span>
+                          <span className="mt-1 block text-xs opacity-90">{option.helper}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <p className="mt-4 text-xs leading-5 text-slate-500">
+                    You can still use the dashboard, sleep reports, weekly screen, and settings below.
                   </p>
                 </div>
 
@@ -1798,53 +1937,57 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
               </div>
             </section>
 
-            <div className="content-stack">
+            <div ref={workspaceStartRef} className="content-stack">
               {activeTab === "mood" ? (
-                <PatientMoodWorkspace
-	                  emotionOptions={emotionOptions}
-	                  selectedEmotion={selectedEmotion}
-	                  occurredAtTime={occurredAtTime}
-	                  notes={notes}
-                  sleepHours={sleepHours}
-                  stressLevel={stressLevel}
-                  cravingLevel={cravingLevel}
-                  substanceUseToday={substanceUseToday}
-                  moneyChangedToday={moneyChangedToday}
-                  medicationAdherence={medicationAdherence}
-                  medicationAdherenceOptions={medicationAdherenceOptions}
-                  medicationAdherenceLabels={medicationAdherenceLabels}
-                  missedMedicationName={missedMedicationName}
-                  missedMedicationReason={missedMedicationReason}
-                  missedMedicationReasonOptions={missedMedicationReasonOptions}
-                  missedMedicationReasonLabels={missedMedicationReasonLabels}
-                  includeLocation={includeLocation}
-                  gpsConsentEnabled={Boolean(consent?.gpsTracking)}
-                  locationFeedback={locationFeedback}
-                  isSaving={isSaving}
-                  isCapturingLocation={isCapturingLocation}
-                  editingEntryId={editingEmotionId}
-                  recentEntries={entries.slice(0, 6)}
-                  isLoadingEntries={isLoadingEntries}
-                  morningSavedToday={morningSavedToday}
-                  morningDueNow={morningDueNow}
-                  nightSavedToday={nightSavedToday}
-                  nightDueNow={nightDueNow}
-                  dailyReports={dailyReports}
-	                  onPickEmotion={handlePickEmotion}
-	                  onOccurredAtTimeChange={setOccurredAtTime}
-	                  onNotesChange={setNotes}
-                  onSleepHoursChange={setSleepHours}
-                  onStressLevelChange={setStressLevel}
-                  onCravingLevelChange={setCravingLevel}
-                  onSubstanceUseTodayChange={setSubstanceUseToday}
-                  onMoneyChangedTodayChange={setMoneyChangedToday}
-                  onMedicationAdherenceChange={handleMedicationAdherenceChange}
-                  onMissedMedicationNameChange={setMissedMedicationName}
-                  onMissedMedicationReasonChange={setMissedMedicationReason}
-                  onIncludeLocationChange={setIncludeLocation}
-                  onSubmit={handleSubmit}
-                  onReset={resetMoodForm}
-                />
+                <div id="patient-check-in-workspace">
+                  <PatientMoodWorkspace
+	                    emotionOptions={emotionOptions}
+	                    selectedEmotion={selectedEmotion}
+	                    occurredAtTime={occurredAtTime}
+	                    notes={notes}
+                    sleepHours={sleepHours}
+                    stressLevel={stressLevel}
+                    cravingLevel={cravingLevel}
+                    substanceUseToday={substanceUseToday}
+                    substanceUsed={substanceUsed}
+                    moneyChangedToday={moneyChangedToday}
+                    medicationAdherence={medicationAdherence}
+                    medicationAdherenceOptions={medicationAdherenceOptions}
+                    medicationAdherenceLabels={medicationAdherenceLabels}
+                    missedMedicationName={missedMedicationName}
+                    missedMedicationReason={missedMedicationReason}
+                    missedMedicationReasonOptions={missedMedicationReasonOptions}
+                    missedMedicationReasonLabels={missedMedicationReasonLabels}
+                    includeLocation={includeLocation}
+                    gpsConsentEnabled={Boolean(consent?.gpsTracking)}
+                    locationFeedback={locationFeedback}
+                    isSaving={isSaving}
+                    isCapturingLocation={isCapturingLocation}
+                    editingEntryId={editingEmotionId}
+                    recentEntries={entries.slice(0, 6)}
+                    isLoadingEntries={isLoadingEntries}
+                    morningSavedToday={morningSavedToday}
+                    morningDueNow={morningDueNow}
+                    nightSavedToday={nightSavedToday}
+                    nightDueNow={nightDueNow}
+                    dailyReports={dailyReports}
+	                    onPickEmotion={handlePickEmotion}
+	                    onOccurredAtTimeChange={setOccurredAtTime}
+	                    onNotesChange={setNotes}
+                    onSleepHoursChange={setSleepHours}
+                    onStressLevelChange={setStressLevel}
+                    onCravingLevelChange={setCravingLevel}
+                    onSubstanceUseTodayChange={handleSubstanceUseTodayChange}
+                    onSubstanceUsedChange={setSubstanceUsed}
+                    onMoneyChangedTodayChange={setMoneyChangedToday}
+                    onMedicationAdherenceChange={handleMedicationAdherenceChange}
+                    onMissedMedicationNameChange={setMissedMedicationName}
+                    onMissedMedicationReasonChange={setMissedMedicationReason}
+                    onIncludeLocationChange={setIncludeLocation}
+                    onSubmit={handleSubmit}
+                    onReset={resetMoodForm}
+                  />
+                </div>
               ) : null}
 
               {activeTab === "sleep" ? (
@@ -1890,9 +2033,9 @@ export default function PatientPage({ user, onLogout }: PatientPageProps) {
 
               {activeTab === "history" ? (
                 <PatientHistoryWorkspace
-                  entries={entries.slice(0, 8)}
-                  dailyReports={dailyReports.slice(0, 8)}
-                  screenings={screenings.slice(0, 8)}
+                  entries={entries}
+                  dailyReports={dailyReports}
+                  screenings={screenings}
                   isLoadingEntries={isLoadingEntries}
                   isLoadingDailyReports={isLoadingDailyReports}
                   isLoadingScreenings={isLoadingScreenings}

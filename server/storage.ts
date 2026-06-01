@@ -188,6 +188,7 @@ function mapEmotion(row: Record<string, unknown> | undefined): Emotion | undefin
     cravingLevel: row.cravingLevel == null ? null : Number(row.cravingLevel),
     substanceUseToday:
       row.substanceUseToday == null ? null : Boolean(row.substanceUseToday),
+    substanceUsed: row.substanceUsed == null ? null : String(row.substanceUsed),
     moneyChangedToday:
       row.moneyChangedToday == null ? null : Boolean(row.moneyChangedToday),
     medicationAdherence:
@@ -485,6 +486,7 @@ export class DatabaseStorage implements IStorage {
           stress_level,
           craving_level,
           substance_use_today,
+          substance_used,
           money_changed_today,
           medication_adherence,
           missed_medication_name,
@@ -500,7 +502,7 @@ export class DatabaseStorage implements IStorage {
           crisis_level,
           crisis_summary
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 0, 0, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 0, 0, ?, ?, ?)
       `)
       .run(
         emotion.patientId,
@@ -510,6 +512,7 @@ export class DatabaseStorage implements IStorage {
         emotion.stressLevel,
         emotion.cravingLevel,
         emotion.substanceUseToday ? 1 : 0,
+        emotion.substanceUsed ?? null,
         emotion.moneyChangedToday ? 1 : 0,
         emotion.medicationAdherence,
         emotion.missedMedicationName ?? null,
@@ -543,6 +546,7 @@ export class DatabaseStorage implements IStorage {
           stress_level = ?,
           craving_level = ?,
           substance_use_today = ?,
+          substance_used = ?,
           money_changed_today = ?,
           medication_adherence = ?,
           missed_medication_name = ?,
@@ -566,6 +570,7 @@ export class DatabaseStorage implements IStorage {
         emotion.stressLevel,
         emotion.cravingLevel,
         emotion.substanceUseToday ? 1 : 0,
+        emotion.substanceUsed ?? null,
         emotion.moneyChangedToday ? 1 : 0,
         emotion.medicationAdherence,
         emotion.missedMedicationName ?? null,
@@ -605,6 +610,7 @@ export class DatabaseStorage implements IStorage {
           stress_level AS stressLevel,
           craving_level AS cravingLevel,
           substance_use_today AS substanceUseToday,
+          substance_used AS substanceUsed,
           money_changed_today AS moneyChangedToday,
           medication_adherence AS medicationAdherence,
           missed_medication_name AS missedMedicationName,
@@ -640,6 +646,7 @@ export class DatabaseStorage implements IStorage {
           stress_level AS stressLevel,
           craving_level AS cravingLevel,
           substance_use_today AS substanceUseToday,
+          substance_used AS substanceUsed,
           money_changed_today AS moneyChangedToday,
           medication_adherence AS medicationAdherence,
           missed_medication_name AS missedMedicationName,
@@ -678,6 +685,7 @@ export class DatabaseStorage implements IStorage {
           stress_level AS stressLevel,
           craving_level AS cravingLevel,
           substance_use_today AS substanceUseToday,
+          substance_used AS substanceUsed,
           money_changed_today AS moneyChangedToday,
           medication_adherence AS medicationAdherence,
           missed_medication_name AS missedMedicationName,

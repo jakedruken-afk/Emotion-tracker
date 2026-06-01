@@ -124,6 +124,11 @@ export function EmotionEntryCard({
             Missed: {entry.missedMedicationName}
           </span>
         ) : null}
+        {entry.substanceUseToday ? (
+          <span className="badge bg-orange-50 text-orange-900">
+            Substance: {entry.substanceUsed ?? "reported"}
+          </span>
+        ) : null}
       </div>
 
       {entry.crisisSummary ? (
@@ -136,7 +141,14 @@ export function EmotionEntryCard({
         <>
           <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
             {entry.substanceUseToday != null ? (
-              <span>Substances today: {entry.substanceUseToday ? "Yes" : "No"}</span>
+              <span>
+                Substances today:{" "}
+                {entry.substanceUseToday
+                  ? entry.substanceUsed
+                    ? `Yes - ${entry.substanceUsed}`
+                    : "Yes"
+                  : "No"}
+              </span>
             ) : null}
             {entry.moneyChangedToday != null ? (
               <span>Got or spent a lot of money: {entry.moneyChangedToday ? "Yes" : "No"}</span>

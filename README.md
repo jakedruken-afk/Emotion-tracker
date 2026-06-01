@@ -43,6 +43,13 @@ engine and it is not a lie detector.
 - Consent records, assignment-based access, and audit logging
 - Backup, restore, release bundle, and GitHub-driven deploy support
 
+## Planning Docs
+
+- [Beta launch notes](docs/BETA_LAUNCH_NOTES.md)
+- [Mobile pilot guide](docs/MOBILE_PILOT.md)
+- [Mobile readiness checklist](docs/MOBILE_READINESS_CHECKLIST.md)
+- [Pitch readiness plan](docs/PITCH_READINESS_PLAN.md)
+
 ## Product Flow
 
 ### Patient Side

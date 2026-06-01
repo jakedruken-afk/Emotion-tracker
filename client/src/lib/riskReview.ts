@@ -15,16 +15,54 @@ import {
 import {
   getAverageSleepDuration,
   getAverageWakeUps,
+  getSleepDurationHours,
 } from "./dailyReports";
 
 export type RiskLevel = "Low" | "Medium" | "High" | "Critical";
+export type RiskConfidence = "High" | "Medium" | "Low";
+
+export type RiskSnapshotOptions = {
+  asOf?: string | Date;
+};
+
+export type EarlyWarningIndex = {
+  acute72hScore: number;
+  trend7dScore: number;
+  overallPriority: RiskLevel;
+  confidence: RiskConfidence;
+  reasons: string[];
+  recommendedAction: string;
+  calculatedAsOf: string;
+  lastCheckInGapDays: number | null;
+  deteriorationWatch: boolean;
+  emergencyFollowUpEvents: EmergencyFollowUpEvent[];
+};
+
+export type EmergencyFollowUpEvent = {
+  id: string;
+  source: "Mood check-in" | "Sleep or meals report" | "Support observation";
+  summary: string;
+  eventAt: string;
+  recordedAt: string;
+  linkedEntityType: "emotion" | "daily_report" | "observation";
+  linkedEntityId: number;
+};
 
 export type PatientRiskSnapshot = {
   patientId: string;
   score: number;
   riskLevel: RiskLevel;
+  acute72hScore: number;
+  trend7dScore: number;
+  overallPriority: RiskLevel;
+  confidence: RiskConfidence;
+  calculatedAsOf: string;
+  recommendedAction: string;
   dominantEmotion: EmotionName | null;
   lastSeenAt: string | null;
+  lastCheckInGapDays: number | null;
+  deteriorationWatch: boolean;
+  emergencyFollowUpEvents: EmergencyFollowUpEvent[];
   reasons: string[];
   suggestedActions: string[];
   summary: string;
@@ -51,6 +89,7 @@ export function buildPatientRiskSnapshots(
   dailyReports: DailyReportRecord[],
   screenings: WeeklyScreeningRecord[],
   observations: ObservationRecord[] = [],
+  options: RiskSnapshotOptions = {},
 ) {
   const patientIds = Array.from(
     new Set([
@@ -69,6 +108,7 @@ export function buildPatientRiskSnapshots(
         dailyReports.filter((report) => report.patientId === patientId),
         screenings.filter((screening) => screening.patientId === patientId),
         observations.filter((observation) => observation.patientId === patientId),
+        options,
       ),
     )
     .sort((left, right) => {
@@ -91,19 +131,26 @@ export function buildPatientRiskSnapshot(
   dailyReports: DailyReportRecord[],
   screenings: WeeklyScreeningRecord[],
   observations: ObservationRecord[] = [],
+  options: RiskSnapshotOptions = {},
 ): PatientRiskSnapshot {
-  const recentLogs = logs.slice(0, 3);
-  const previousLogs = logs.slice(3, 10);
-  const morningReports = dailyReports.filter((report) => report.reportType === "morning");
-  const nightReports = dailyReports.filter((report) => report.reportType === "night");
+  const asOfDate = normalizeAsOfDate(options.asOf);
+  const calculatedAsOf = asOfDate.toISOString();
+  const sortedLogs = filterAndSortAtOrBefore(logs, asOfDate);
+  const sortedDailyReports = filterAndSortAtOrBefore(dailyReports, asOfDate);
+  const sortedScreenings = filterAndSortAtOrBefore(screenings, asOfDate);
+  const sortedObservations = filterAndSortAtOrBefore(observations, asOfDate);
+  const recentLogs = sortedLogs.slice(0, 3);
+  const previousLogs = sortedLogs.slice(3, 10);
+  const morningReports = sortedDailyReports.filter((report) => report.reportType === "morning");
+  const nightReports = sortedDailyReports.filter((report) => report.reportType === "night");
   const recentMorningReports = morningReports.slice(0, 3);
   const previousMorningReports = morningReports.slice(3, 10);
   const recentNightReports = nightReports.slice(0, 3);
   const previousNightReports = nightReports.slice(3, 10);
-  const recentObservations = observations.filter((observation) =>
-    isWithinDays(observation.timestamp, 7),
+  const recentObservations = sortedObservations.filter((observation) =>
+    isWithinDays(observation.timestamp, 7, asOfDate),
   );
-  const latestScreening = getLatestWeeklyScreening(screenings);
+  const latestScreening = getLatestWeeklyScreening(sortedScreenings);
   const whatChanged = buildWhatChanged(
     recentLogs,
     previousLogs,
@@ -116,14 +163,14 @@ export function buildPatientRiskSnapshot(
   const suggestedActions: string[] = [];
   let score = 0;
 
-  const dominantEmotion = getDominantEmotion(recentLogs.length > 0 ? recentLogs : logs);
+  const dominantEmotion = getDominantEmotion(recentLogs.length > 0 ? recentLogs : sortedLogs);
   const crisisSignals = [
     ...recentLogs.map((log) => ({ level: log.crisisLevel, summary: log.crisisSummary })),
-    ...dailyReports.slice(0, 5).map((report) => ({
+    ...sortedDailyReports.slice(0, 5).map((report) => ({
       level: report.crisisLevel,
       summary: report.crisisSummary,
     })),
-    ...screenings.slice(0, 3).map((screening) => ({
+    ...sortedScreenings.slice(0, 3).map((screening) => ({
       level: screening.crisisLevel,
       summary: screening.crisisSummary,
     })),
@@ -209,6 +256,22 @@ export function buildPatientRiskSnapshot(
     reasons.push("Recent support observation adds clinically relevant concern");
   }
 
+  const earlyWarning = buildEarlyWarningIndex(
+    sortedLogs,
+    sortedDailyReports,
+    sortedScreenings,
+    sortedObservations,
+    asOfDate,
+    crisisLevel,
+  );
+  const earlyWarningScore =
+    earlyWarning.overallPriority === "Critical"
+      ? 10
+      : Math.min(9, Math.ceil(Math.max(earlyWarning.acute72hScore, earlyWarning.trend7dScore) / 10));
+  score = Math.max(score, earlyWarningScore);
+  reasons.push(...earlyWarning.reasons);
+  suggestedActions.push(earlyWarning.recommendedAction);
+
   const mismatch = buildPerspectiveMismatch(
     recentLogs,
     recentMorningReports,
@@ -224,15 +287,15 @@ export function buildPatientRiskSnapshot(
     score += 1;
   }
 
-  const reliability = buildReliability(logs, dailyReports, screenings, mismatch.level);
-  const lastSeenAt = getLastSeenAt(logs, dailyReports, screenings, observations);
+  const reliability = buildReliability(sortedLogs, sortedDailyReports, sortedScreenings, mismatch.level);
+  const lastSeenAt = getLastSeenAt(sortedLogs, sortedDailyReports, sortedScreenings, sortedObservations);
 
   if (lastSeenAt == null) {
     reasons.push("No patient data recorded yet");
   }
 
-  if (whatChanged.length === 0 && lastSeenAt != null && isWithinDays(lastSeenAt, 7)) {
-    reasons.push("No major change signal was detected this week");
+  if (whatChanged.length === 0 && earlyWarning.reasons.length === 0 && lastSeenAt != null && isWithinDays(lastSeenAt, 7, asOfDate)) {
+    reasons.push("No major warning signal was detected this week");
   }
 
   if (morningReports.length === 0) {
@@ -245,16 +308,28 @@ export function buildPatientRiskSnapshot(
     score += 1;
   }
 
-  const riskLevel = getRiskLevel(score, crisisLevel);
+  const riskLevel = getHigherRiskLevel(getRiskLevel(score, crisisLevel), earlyWarning.overallPriority);
   suggestedActions.unshift(getDefaultAction(riskLevel));
+  if (earlyWarning.deteriorationWatch) {
+    whatChanged.unshift("Deterioration Watch: check-ins stopped after concerning warning signs.");
+  }
 
   return {
     patientId,
     score,
     riskLevel,
+    acute72hScore: earlyWarning.acute72hScore,
+    trend7dScore: earlyWarning.trend7dScore,
+    overallPriority: riskLevel,
+    confidence: earlyWarning.confidence,
+    calculatedAsOf,
+    recommendedAction: earlyWarning.recommendedAction,
     dominantEmotion,
     lastSeenAt,
-    reasons: dedupe(reasons).slice(0, 5),
+    lastCheckInGapDays: earlyWarning.lastCheckInGapDays,
+    deteriorationWatch: earlyWarning.deteriorationWatch,
+    emergencyFollowUpEvents: earlyWarning.emergencyFollowUpEvents,
+    reasons: dedupe(reasons).slice(0, 12),
     suggestedActions: dedupe(suggestedActions).slice(0, 4),
     summary: buildRiskSummary(patientId, riskLevel, whatChanged, dedupe(reasons), suggestedActions),
     whatChanged,
@@ -295,10 +370,11 @@ export function buildWeeklyPatientReview(
 
   const plainTextSections = [
     `10-second summary for ${patientId}`,
-    `What is happening: ${risk.whatChanged.length > 0 ? risk.whatChanged.join("; ") : "No major change signal detected."}`,
-    `How serious is it: ${risk.riskLevel} priority${risk.crisisSummary ? ` with a safety alert. ${risk.crisisSummary}` : "."}`,
+    `What is happening: ${risk.whatChanged.length > 0 ? risk.whatChanged.join("; ") : "No major warning signal detected."}`,
+    `How serious is it: ${risk.riskLevel} priority. 72-hour score ${risk.acute72hScore}/100. 7-day trend score ${risk.trend7dScore}/100.${risk.crisisSummary ? ` Safety alert: ${risk.crisisSummary}` : ""}`,
     `Why it matters: ${risk.reasons.length > 0 ? risk.reasons.join("; ") : "No major review reason was detected."}`,
     `What to do: ${risk.suggestedActions.join(" ")}`,
+    `Confidence: ${risk.confidence}.${risk.lastCheckInGapDays != null ? ` Last check-in gap is about ${Math.floor(risk.lastCheckInGapDays)} day(s).` : ""}`,
     `Reliability: ${risk.reliabilityLevel}. ${risk.reliabilitySummary}${risk.mismatchSummary ? ` ${risk.mismatchSummary}` : ""}`,
     `Data gaps: ${dataGaps.length > 0 ? dataGaps.join(" ") : "No major data gaps detected."}`,
   ];
@@ -310,6 +386,273 @@ export function buildWeeklyPatientReview(
     suggestedActions: risk.suggestedActions,
     dataGaps,
     plainText: plainTextSections.join("\n\n"),
+  };
+}
+
+function buildEarlyWarningIndex(
+  logs: EmotionLog[],
+  dailyReports: DailyReportRecord[],
+  screenings: WeeklyScreeningRecord[],
+  observations: ObservationRecord[],
+  asOfDate: Date,
+  crisisLevel: CrisisLevel,
+): EarlyWarningIndex {
+  const reasons: string[] = [];
+  let acute72hScore = 0;
+  let trend7dScore = 0;
+  let minimumPriority: RiskLevel = "Low";
+  let hardGatePriority: RiskLevel | null = null;
+
+  const logs7d = filterWithinDays(logs, 7, asOfDate);
+  const baselineLogs = filterBetweenDays(logs, 7, 30, asOfDate);
+  const routineReports = filterWithinDays(dailyReports, 10, asOfDate);
+  const observations7d = filterWithinDays(observations, 7, asOfDate);
+  const latestScreening = screenings[0] ?? null;
+  const latestScreeningAgeDays = latestScreening
+    ? getAgeInDays(latestScreening.timestamp, asOfDate)
+    : null;
+
+  const addSignal = (
+    reason: string,
+    acutePoints: number,
+    trendPoints: number,
+    priorityFloor: RiskLevel = "Low",
+  ) => {
+    reasons.push(reason);
+    acute72hScore += acutePoints;
+    trend7dScore += trendPoints;
+    minimumPriority = getHigherRiskLevel(minimumPriority, priorityFloor);
+  };
+
+  if (crisisLevel === "critical") {
+    hardGatePriority = "Critical";
+    addSignal("Critical safety language was detected before this review point.", 100, 100, "Critical");
+  } else if (crisisLevel === "high") {
+    addSignal("Recent safety language needs same-day review.", 65, 65, "High");
+  }
+
+  if (
+    latestScreening &&
+    latestScreeningAgeDays != null &&
+    latestScreeningAgeDays <= 30
+  ) {
+    const disposition = getWeeklyScreeningDisposition(latestScreening);
+    const screeningSignals = getWeeklyScreeningSignals(latestScreening);
+
+    if (latestScreening.currentThoughts || latestScreening.needsHelpStayingSafe) {
+      hardGatePriority = "Critical";
+      addSignal("Weekly screen says immediate safety support may be needed.", 100, 100, "Critical");
+    } else if (disposition === "positive") {
+      addSignal("Latest weekly safety screen was positive.", 32, 40, "High");
+    } else if (disposition === "history") {
+      addSignal("Weekly screen includes past serious self-harm history.", 8, 18, "Medium");
+    }
+
+    if (latestScreening.everTriedToKillSelf && latestScreening.attemptTiming === "within_year") {
+      addSignal("Past serious self-harm attempt was reported within the last year.", 12, 28, "High");
+    }
+
+    if (latestScreening.hopeless || latestScreening.couldNotEnjoyThings) {
+      addSignal("Weekly screen includes hopelessness or loss of enjoyment.", 8, 14, "Medium");
+    }
+
+    if (latestScreening.depressedHardToFunction || latestScreening.anxiousOnEdge) {
+      addSignal("Weekly screen shows mood or anxiety affecting daily function.", 6, 12, "Medium");
+    }
+
+    if (latestScreening.substanceUseMoreThanUsual) {
+      addSignal("Weekly screen shows more substance or alcohol use than usual.", 8, 14, "Medium");
+    }
+
+    if (latestScreening.sleepTrouble || latestScreening.appetiteChange) {
+      addSignal("Weekly screen shows sleep or appetite disruption.", 6, 12, "Medium");
+    }
+
+    if (screeningSignals.length >= 5) {
+      addSignal("Weekly screen contains several deterioration signals at once.", 8, 18, "High");
+    }
+  }
+
+  const emergencyFollowUpEvents = collectEmergencyFollowUpEvents(
+    logs,
+    dailyReports,
+    observations,
+    asOfDate,
+  );
+  if (emergencyFollowUpEvents.length > 0) {
+    hardGatePriority = "Critical";
+    addSignal(
+      "Patient or support text reports emergency mental-health or crisis-response involvement.",
+      100,
+      100,
+      "Critical",
+    );
+  }
+
+  const zeroMealReports = routineReports.filter(
+    (report) => report.reportType === "night" && (report.mealsCount ?? 99) <= 0,
+  );
+  const lowMealReports = routineReports.filter(
+    (report) => report.reportType === "night" && (report.mealsCount ?? 99) <= 1,
+  );
+  const poorSleepReports = routineReports.filter(
+    (report) =>
+      report.reportType === "morning" &&
+      (report.sleepQuality === "bad" ||
+        report.sleepQuality === "very_bad" ||
+        report.feltRested === false ||
+        (report.wakeUps ?? 0) >= 3),
+  );
+  const veryShortSleepReports = routineReports.filter((report) => {
+    if (report.reportType !== "morning") {
+      return false;
+    }
+
+    const duration = getSleepDurationHours(report.bedTime, report.wakeTime);
+    return duration != null && duration <= 4;
+  });
+
+  if (zeroMealReports.length >= 2) {
+    const zeroMealReason = "Repeated night reports show 0 meals.";
+    addSignal(zeroMealReason, 16, 26, "High");
+    promoteReason(reasons, zeroMealReason);
+  } else if (lowMealReports.length > 0) {
+    addSignal("Recent night report shows one or fewer meals.", 8, 14, "Medium");
+  }
+
+  if (poorSleepReports.length >= 2 || veryShortSleepReports.length > 0) {
+    addSignal("Sleep or rest disruption is repeating in recent reports.", 10, 18, "Medium");
+  } else if (poorSleepReports.length === 1) {
+    addSignal("Recent sleep report shows poor rest or frequent wakeups.", 6, 10, "Medium");
+  }
+
+  const missedMedicationLogs = logs7d.filter(
+    (log) => log.medicationAdherence === "missed_some" || log.medicationAdherence === "missed_all",
+  );
+  if (missedMedicationLogs.some((log) => log.medicationAdherence === "missed_all")) {
+    addSignal("Recent check-in says all medication was missed.", 14, 18, "High");
+  } else if (missedMedicationLogs.length > 0) {
+    addSignal("Recent check-in includes missed medication.", 8, 12, "Medium");
+  }
+
+  const substanceUseLogs = logs7d.filter((log) => log.substanceUseToday);
+  if (substanceUseLogs.length >= 2) {
+    addSignal("Substance use appears in multiple recent check-ins.", 14, 18, "High");
+  } else if (substanceUseLogs.length === 1) {
+    addSignal("Recent check-in includes substance use.", 8, 12, "Medium");
+  }
+
+  const highCravingLogs = logs7d.filter((log) => (log.cravingLevel ?? 0) >= 7);
+  const highStressLogs = logs7d.filter((log) => (log.stressLevel ?? 0) >= 8);
+  if (highCravingLogs.length >= 2) {
+    addSignal("High cravings are repeating across recent check-ins.", 16, 20, "High");
+  } else if (highCravingLogs.length === 1) {
+    addSignal("Recent craving level is high.", 10, 12, "Medium");
+  }
+
+  if (highStressLogs.length >= 2) {
+    addSignal("High stress is repeating across recent check-ins.", 14, 18, "High");
+  } else if (highStressLogs.length === 1) {
+    addSignal("Recent stress level is high.", 8, 10, "Medium");
+  }
+
+  const recentStress = average(logs7d.map((log) => log.stressLevel).filter(isNumber));
+  const baselineStress = average(baselineLogs.map((log) => log.stressLevel).filter(isNumber));
+  const recentCraving = average(logs7d.map((log) => log.cravingLevel).filter(isNumber));
+  const baselineCraving = average(baselineLogs.map((log) => log.cravingLevel).filter(isNumber));
+  if (recentStress != null && baselineStress != null && recentStress - baselineStress >= 2) {
+    addSignal("Stress is rising compared with the patient's prior baseline.", 8, 16, "Medium");
+  }
+
+  if (recentCraving != null && baselineCraving != null && recentCraving - baselineCraving >= 2) {
+    addSignal("Cravings are rising compared with the patient's prior baseline.", 8, 16, "Medium");
+  }
+
+  const negativeMoodLogs = logs7d.filter((log) => getMoodSeverity(log.emotion) >= 1);
+  const recentMoodSeverity = average(logs7d.map((log) => getMoodSeverity(log.emotion)));
+  const baselineMoodSeverity = average(baselineLogs.map((log) => getMoodSeverity(log.emotion)));
+  if (negativeMoodLogs.length >= 3) {
+    addSignal("Negative mood entries are repeating across the week.", 8, 14, "Medium");
+  }
+
+  if (
+    recentMoodSeverity != null &&
+    baselineMoodSeverity != null &&
+    recentMoodSeverity - baselineMoodSeverity >= 1
+  ) {
+    addSignal("Mood severity is worse than the patient's prior baseline.", 6, 12, "Medium");
+  }
+
+  if (observations7d.some((observation) => observation.priority === "Critical" || observation.priority === "Urgent")) {
+    hardGatePriority = "Critical";
+    addSignal("Recent support observation is urgent or critical.", 100, 100, "Critical");
+  } else if (observations7d.some((observation) => observation.priority === "High")) {
+    addSignal("Recent support observation is marked high priority.", 18, 22, "High");
+  }
+
+  const lastSeenAt = getLastSeenAt(logs, dailyReports, screenings, observations);
+  const lastCheckInGapDays = lastSeenAt ? getAgeInDays(lastSeenAt, asOfDate) : null;
+  const hasMeaningfulConcern =
+    reasons.length > 0 ||
+    latestScreening?.wishedDead === true ||
+    latestScreening?.familyBetterOffDead === true ||
+    latestScreening?.everTriedToKillSelf === true ||
+    lowMealReports.length > 0 ||
+    missedMedicationLogs.length > 0 ||
+    substanceUseLogs.length > 0;
+  const deteriorationWatch =
+    lastCheckInGapDays != null && lastCheckInGapDays >= 2 && hasMeaningfulConcern;
+
+  if (deteriorationWatch) {
+    const deteriorationReason =
+      `Deterioration Watch: no patient check-in for ${formatGapDays(lastCheckInGapDays)} after concerning warning signs.`;
+    addSignal(
+      deteriorationReason,
+      10,
+      18,
+      lastCheckInGapDays >= 3 ? "High" : "Medium",
+    );
+    promoteReason(reasons, deteriorationReason);
+  }
+
+  if (latestScreening == null) {
+    reasons.push("No weekly safety screen is on file, so confidence is lower.");
+  }
+
+  acute72hScore = clampScore(acute72hScore);
+  trend7dScore = clampScore(trend7dScore);
+
+  const scorePriority = getEarlyWarningPriority(
+    acute72hScore,
+    trend7dScore,
+    crisisLevel,
+  );
+  const overallPriority = hardGatePriority
+    ? getHigherRiskLevel(scorePriority, hardGatePriority)
+    : getHigherRiskLevel(scorePriority, minimumPriority);
+  const confidence = getEarlyWarningConfidence(
+    logs,
+    dailyReports,
+    screenings,
+    lastCheckInGapDays,
+  );
+  const recommendedAction = getEarlyWarningAction(
+    overallPriority,
+    deteriorationWatch,
+    confidence,
+  );
+
+  return {
+    acute72hScore,
+    trend7dScore,
+    overallPriority,
+    confidence,
+    reasons: dedupe(reasons).slice(0, 12),
+    recommendedAction,
+    calculatedAsOf: asOfDate.toISOString(),
+    lastCheckInGapDays,
+    deteriorationWatch,
+    emergencyFollowUpEvents,
   };
 }
 
@@ -403,6 +746,53 @@ function buildWhatChanged(
   }
 
   return dedupe(changes).slice(0, 4);
+}
+
+function collectEmergencyFollowUpEvents(
+  logs: EmotionLog[],
+  dailyReports: DailyReportRecord[],
+  observations: ObservationRecord[],
+  asOfDate: Date,
+): EmergencyFollowUpEvent[] {
+  const recentLogs = filterWithinDays(logs, 30, asOfDate);
+  const recentReports = filterWithinDays(dailyReports, 30, asOfDate);
+  const recentObservations = filterWithinDays(observations, 30, asOfDate);
+
+  return [
+    ...recentLogs
+      .filter((log) => hasEmergencyInterventionText(log.notes))
+      .map((log) => ({
+        id: `emotion:${log.id}`,
+        source: "Mood check-in" as const,
+        summary: "Emergency mental-health or crisis-response involvement was mentioned in a mood check-in.",
+        eventAt: log.occurredAt ?? log.timestamp,
+        recordedAt: log.timestamp,
+        linkedEntityType: "emotion" as const,
+        linkedEntityId: log.id,
+      })),
+    ...recentReports
+      .filter((report) => hasEmergencyInterventionText(report.notes, report.mealsNote))
+      .map((report) => ({
+        id: `daily_report:${report.id}`,
+        source: "Sleep or meals report" as const,
+        summary: "Emergency mental-health or crisis-response involvement was mentioned in a sleep or meals report.",
+        eventAt: report.timestamp,
+        recordedAt: report.timestamp,
+        linkedEntityType: "daily_report" as const,
+        linkedEntityId: report.id,
+      })),
+    ...recentObservations
+      .filter((observation) => hasEmergencyInterventionText(observation.observation))
+      .map((observation) => ({
+        id: `observation:${observation.id}`,
+        source: "Support observation" as const,
+        summary: "Emergency mental-health or crisis-response involvement was mentioned in a support observation.",
+        eventAt: observation.timestamp,
+        recordedAt: observation.timestamp,
+        linkedEntityType: "observation" as const,
+        linkedEntityId: observation.id,
+      })),
+  ].sort((left, right) => toTimestamp(right.eventAt) - toTimestamp(left.eventAt));
 }
 
 function buildPerspectiveMismatch(
@@ -513,7 +903,7 @@ function getReliabilityLevel(
 }
 
 function getRiskLevel(score: number, crisisLevel: CrisisLevel): RiskLevel {
-  if (crisisLevel === "critical" || score >= 10) {
+  if (crisisLevel === "critical") {
     return "Critical";
   }
 
@@ -528,6 +918,81 @@ function getRiskLevel(score: number, crisisLevel: CrisisLevel): RiskLevel {
   return "Low";
 }
 
+function getEarlyWarningPriority(
+  acute72hScore: number,
+  trend7dScore: number,
+  crisisLevel: CrisisLevel,
+): RiskLevel {
+  if (crisisLevel === "critical") {
+    return "Critical";
+  }
+
+  if (crisisLevel === "high" || acute72hScore >= 55 || trend7dScore >= 55) {
+    return "High";
+  }
+
+  if (acute72hScore >= 35 || trend7dScore >= 35) {
+    return "Medium";
+  }
+
+  return "Low";
+}
+
+function getEarlyWarningConfidence(
+  logs: EmotionLog[],
+  dailyReports: DailyReportRecord[],
+  screenings: WeeklyScreeningRecord[],
+  lastCheckInGapDays: number | null,
+): RiskConfidence {
+  const totalRecords = logs.length + dailyReports.length + screenings.length;
+
+  if (totalRecords === 0) {
+    return "Low";
+  }
+
+  if (lastCheckInGapDays == null || lastCheckInGapDays >= 3) {
+    return "Low";
+  }
+
+  if (lastCheckInGapDays >= 2 || totalRecords < 3 || screenings.length === 0) {
+    return "Medium";
+  }
+
+  return "High";
+}
+
+function getEarlyWarningAction(
+  riskLevel: RiskLevel,
+  deteriorationWatch: boolean,
+  confidence: RiskConfidence,
+) {
+  if (riskLevel === "Critical") {
+    return "Complete immediate same-day safety review and document the response.";
+  }
+
+  if (deteriorationWatch) {
+    return "Contact the patient or support person because check-ins stopped after warning signs.";
+  }
+
+  if (riskLevel === "High") {
+    return "Review within 24 hours and focus on the strongest deterioration signals.";
+  }
+
+  if (riskLevel === "Medium") {
+    return "Schedule a focused follow-up and confirm whether symptoms are worsening.";
+  }
+
+  if (confidence === "Low") {
+    return "Collect current check-in data before treating the snapshot as reassuring.";
+  }
+
+  return "Continue routine monitoring and confirm no new concerns.";
+}
+
+function getHigherRiskLevel(left: RiskLevel, right: RiskLevel): RiskLevel {
+  return getRiskRank(right) > getRiskRank(left) ? right : left;
+}
+
 function buildRiskSummary(
   patientId: string,
   riskLevel: RiskLevel,
@@ -536,7 +1001,7 @@ function buildRiskSummary(
   suggestedActions: string[],
 ) {
   const changeText =
-    whatChanged.length > 0 ? whatChanged.join(" ") : "No major change signal was detected.";
+    whatChanged.length > 0 ? whatChanged.join(" ") : "No major warning signal was detected.";
   const reasonText =
     reasons.length > 0 ? reasons.slice(0, 2).join(" ") : "No major review reason was detected.";
 
@@ -638,12 +1103,121 @@ function toTimestamp(value: string | null) {
   return value == null ? 0 : new Date(value).getTime();
 }
 
+function normalizeAsOfDate(asOf: string | Date | undefined) {
+  if (asOf instanceof Date && Number.isFinite(asOf.getTime())) {
+    return asOf;
+  }
+
+  if (typeof asOf === "string") {
+    const parsed = new Date(asOf);
+    if (Number.isFinite(parsed.getTime())) {
+      return parsed;
+    }
+  }
+
+  return new Date();
+}
+
+function filterAndSortAtOrBefore<T extends { timestamp: string }>(
+  records: T[],
+  asOfDate: Date,
+) {
+  const asOfTime = asOfDate.getTime();
+
+  return records
+    .filter((record) => toTimestamp(record.timestamp) <= asOfTime)
+    .sort((left, right) => toTimestamp(right.timestamp) - toTimestamp(left.timestamp));
+}
+
+function filterWithinDays<T extends { timestamp: string }>(
+  records: T[],
+  days: number,
+  asOfDate: Date,
+) {
+  return records.filter((record) => isWithinDays(record.timestamp, days, asOfDate));
+}
+
+function filterBetweenDays<T extends { timestamp: string }>(
+  records: T[],
+  minimumDays: number,
+  maximumDays: number,
+  asOfDate: Date,
+) {
+  return records.filter((record) => {
+    const ageDays = getAgeInDays(record.timestamp, asOfDate);
+    return ageDays >= minimumDays && ageDays <= maximumDays;
+  });
+}
+
+function getAgeInDays(timestamp: string, asOfDate: Date) {
+  return Math.max(0, (asOfDate.getTime() - toTimestamp(timestamp)) / (24 * 60 * 60 * 1000));
+}
+
+function formatGapDays(days: number) {
+  if (days < 2) {
+    return "less than 2 days";
+  }
+
+  if (days < 3) {
+    return "about 2 days";
+  }
+
+  return `${Math.floor(days)} days`;
+}
+
+function clampScore(value: number) {
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function promoteReason(reasons: string[], reason: string) {
+  const reasonIndex = reasons.lastIndexOf(reason);
+  if (reasonIndex > 0) {
+    reasons.splice(reasonIndex, 1);
+    reasons.unshift(reason);
+  }
+}
+
+function hasEmergencyInterventionText(...values: Array<string | null | undefined>) {
+  const normalized = normalizeReviewText(values.join(" "));
+  if (normalized.length === 0) {
+    return false;
+  }
+
+  if (isNegatedEmergencyIntervention(normalized)) {
+    return false;
+  }
+
+  return emergencyInterventionReviewPatterns.some((pattern) => pattern.test(normalized));
+}
+
+function isNegatedEmergencyIntervention(value: string) {
+  return negatedEmergencyInterventionReviewPatterns.some((pattern) => pattern.test(value));
+}
+
+function normalizeReviewText(value: string) {
+  return value.toLowerCase().replace(/[’`]/g, "'").replace(/\s+/g, " ").trim();
+}
+
+const emergencyInterventionReviewPatterns = [
+  /\b(crisis|mental health crisis|mobile crisis|crisis team|crisis response|crisis worker)\b.{0,80}\b(called|contacted|phoned|sent|dispatched|came|arrived|attended|visited|went to|showed up)\b/,
+  /\b(called|contacted|phoned|sent|dispatched)\b.{0,80}\b(crisis|mental health crisis|mobile crisis|crisis team|crisis response|crisis worker)\b/,
+  /\b(911|9-1-1|emergency services|ems|paramedic|paramedics|ambulance|police|rcmp)\b.{0,80}\b(called|contacted|phoned|sent|dispatched|came|arrived|attended|visited|went to|showed up)\b/,
+  /\b(called|contacted|phoned|sent|dispatched)\b.{0,80}\b(911|9-1-1|emergency services|ems|paramedic|paramedics|ambulance|police|rcmp)\b/,
+  /\b(wellness|welfare) check\b/,
+];
+
+const negatedEmergencyInterventionReviewPatterns = [
+  /\b(didn'?t|did not|never|wasn'?t|was not|weren'?t|were not|no one)\b.{0,40}\b(call|called|contact|contacted|phone|phoned|send|sent|dispatch|dispatched|come|came|arrive|arrived)\b.{0,80}\b(crisis|911|9-1-1|emergency|ems|paramedic|ambulance|police|rcmp|wellness|welfare)\b/,
+  /\b(crisis|911|9-1-1|emergency|ems|paramedic|ambulance|police|rcmp|wellness|welfare)\b.{0,80}\b(wasn'?t|was not|weren'?t|were not|never|not)\b.{0,40}\b(called|contacted|phoned|sent|dispatched|needed)\b/,
+];
+
 function dedupe(values: string[]) {
   return Array.from(new Set(values));
 }
 
-function isWithinDays(timestamp: string, days: number) {
-  return Date.now() - new Date(timestamp).getTime() <= days * 24 * 60 * 60 * 1000;
+function isWithinDays(timestamp: string, days: number, asOfDate: Date) {
+  const ageMs = asOfDate.getTime() - toTimestamp(timestamp);
+  return ageMs >= 0 && ageMs <= days * 24 * 60 * 60 * 1000;
 }
 
 function isHighPriorityObservation(observation: ObservationRecord) {

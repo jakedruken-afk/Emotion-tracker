@@ -157,22 +157,29 @@ async function logView(
   });
 }
 
-function getEmotionTextInputs(record: Pick<
-  EmotionRecord,
-  "notes" | "missedMedicationName"
->) {
-  return [record.notes, record.missedMedicationName];
+function getEmotionTextInputs(record: {
+  notes?: string | null;
+  missedMedicationName?: string | null;
+  substanceUsed?: string | null;
+}) {
+  return [record.notes, record.missedMedicationName, record.substanceUsed];
 }
 
 function normalizeEmotionMedicationDetails(record: InsertEmotion): InsertEmotion;
 function normalizeEmotionMedicationDetails(record: UpdateEmotion): UpdateEmotion;
 function normalizeEmotionMedicationDetails(record: InsertEmotion | UpdateEmotion) {
+  const substanceUsed = record.substanceUseToday ? record.substanceUsed : null;
+
   if (isMissedMedicationAdherence(record.medicationAdherence)) {
-    return record;
+    return {
+      ...record,
+      substanceUsed,
+    };
   }
 
   return {
     ...record,
+    substanceUsed,
     missedMedicationName: null,
     missedMedicationReason: null,
   };

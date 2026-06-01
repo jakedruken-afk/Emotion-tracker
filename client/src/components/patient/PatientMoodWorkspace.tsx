@@ -50,6 +50,7 @@ type MoodWorkspaceProps = {
   stressLevel: number;
   cravingLevel: number;
   substanceUseToday: boolean;
+  substanceUsed: string;
   moneyChangedToday: boolean;
   medicationAdherence: MedicationAdherence;
   medicationAdherenceOptions: readonly MedicationAdherence[];
@@ -78,6 +79,7 @@ type MoodWorkspaceProps = {
   onStressLevelChange: (value: number) => void;
   onCravingLevelChange: (value: number) => void;
   onSubstanceUseTodayChange: (value: boolean) => void;
+  onSubstanceUsedChange: (value: string) => void;
   onMoneyChangedTodayChange: (value: boolean) => void;
   onMedicationAdherenceChange: (value: MedicationAdherence) => void;
   onMissedMedicationNameChange: (value: string) => void;
@@ -96,6 +98,7 @@ export default function PatientMoodWorkspace({
   stressLevel,
   cravingLevel,
   substanceUseToday,
+  substanceUsed,
   moneyChangedToday,
   medicationAdherence,
   medicationAdherenceOptions,
@@ -124,6 +127,7 @@ export default function PatientMoodWorkspace({
   onStressLevelChange,
   onCravingLevelChange,
   onSubstanceUseTodayChange,
+  onSubstanceUsedChange,
   onMoneyChangedTodayChange,
   onMedicationAdherenceChange,
   onMissedMedicationNameChange,
@@ -334,6 +338,23 @@ export default function PatientMoodWorkspace({
                     <option value="yes">Yes</option>
                   </select>
                 </Field>
+
+                {substanceUseToday ? (
+                  <Field
+                    label="Which substance was used?"
+                    htmlFor="substance-used"
+                    caption="Write the substance name. Max 200 characters."
+                  >
+                    <input
+                      id="substance-used"
+                      className="input"
+                      maxLength={200}
+                      value={substanceUsed}
+                      onChange={(event) => onSubstanceUsedChange(event.target.value)}
+                      placeholder="Example: alcohol, cannabis, cocaine, nicotine, or other"
+                    />
+                  </Field>
+                ) : null}
 
                 <Field
                   label="Did you get or spend a lot of money today?"

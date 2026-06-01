@@ -1088,9 +1088,9 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
                   tone="sky"
                 />
                 <MetricTile
-                  label="Clinically usable entries"
+                  label="Review-ready entries"
                   value={`${pilotMetrics.clinicallyUsableEntryRate.percent}%`}
-                  detail="Tracks whether saved entries contain enough structured detail to be useful for review."
+                  detail="Tracks whether saved entries contain enough structured detail for staff review."
                   tone="mint"
                 />
                 <MetricTile
@@ -1324,6 +1324,15 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
                       Score {focusRisk.score}
                     </span>
                     <span className="badge bg-white text-slate-700">
+                      72h {focusRisk.acute72hScore}
+                    </span>
+                    <span className="badge bg-white text-slate-700">
+                      7d {focusRisk.trend7dScore}
+                    </span>
+                    <span className="badge bg-slate-100 text-slate-700">
+                      Confidence: {focusRisk.confidence}
+                    </span>
+                    <span className="badge bg-white text-slate-700">
                       Dominant mood: {focusRisk.dominantEmotion ?? "None"}
                     </span>
                     <span className="badge bg-slate-100 text-slate-700">
@@ -1339,6 +1348,11 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
                         {focusRisk.crisisLevel === "critical" ? "Critical safety alert" : "Safety alert"}
                       </span>
                     ) : null}
+                    {focusRisk.deteriorationWatch ? (
+                      <span className="badge bg-orange-100 text-orange-900">
+                        Deterioration Watch
+                      </span>
+                    ) : null}
                   </div>
 
                   <div className="mt-5 grid gap-4">
@@ -1349,7 +1363,19 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
                       <p className="mt-2 text-sm leading-6 text-slate-700">
                         {focusRisk.whatChanged.length > 0
                           ? focusRisk.whatChanged.join(" ")
-                          : "No major change signal was detected this week."}
+                          : "No major warning signal was detected this week."}
+                      </p>
+                    </div>
+                    <div className="timeline-card">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        Early-warning window
+                      </p>
+                      <p className="mt-2 text-sm leading-6 text-slate-700">
+                        72-hour score {focusRisk.acute72hScore}/100. 7-day trend score{" "}
+                        {focusRisk.trend7dScore}/100. Confidence is {focusRisk.confidence.toLowerCase()}.
+                        {focusRisk.lastCheckInGapDays != null
+                          ? ` Last check-in was about ${Math.floor(focusRisk.lastCheckInGapDays)} day(s) ago.`
+                          : " No patient check-in has been recorded yet."}
                       </p>
                     </div>
                     <div className="timeline-card">
@@ -1379,6 +1405,27 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
                         {focusRisk.suggestedActions.join(" ")}
                       </p>
                     </div>
+                    {focusRisk.emergencyFollowUpEvents.length > 0 ? (
+                      <div className="timeline-card">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-rose-700">
+                          Emergency response follow-up
+                        </p>
+                        <div className="mt-3 space-y-3 text-sm leading-6 text-slate-700">
+                          {focusRisk.emergencyFollowUpEvents.slice(0, 3).map((event) => (
+                            <div key={event.id}>
+                              <p className="font-semibold text-slate-900">
+                                {format(new Date(event.eventAt), "MMM d, yyyy 'at' h:mm a")}
+                              </p>
+                              <p>{event.summary}</p>
+                              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                Source: {event.source}. Recorded{" "}
+                                {format(new Date(event.recordedAt), "MMM d, yyyy 'at' h:mm a")}.
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
                     {focusRisk.mismatchSummary ? (
                       <div className="rounded-[24px] border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
                         {focusRisk.mismatchSummary}
@@ -2362,6 +2409,8 @@ function PriorityReviewOverlay({
               {snapshot.riskLevel} priority
             </span>
             <span className="badge bg-slate-100 text-slate-700">Score {snapshot.score}</span>
+            <span className="badge bg-white text-slate-700">72h {snapshot.acute72hScore}</span>
+            <span className="badge bg-white text-slate-700">7d {snapshot.trend7dScore}</span>
           </div>
         </div>
 
@@ -2381,7 +2430,7 @@ function PriorityReviewOverlay({
 
           <div className="rounded-[24px] border border-slate-200 bg-white px-4 py-4">
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-              Recent changes
+              Pre-crisis changes
             </p>
             <ul className="mt-3 space-y-2 text-sm leading-6 text-slate-700">
               {changes.slice(0, 4).map((change) => (
@@ -2402,13 +2451,42 @@ function PriorityReviewOverlay({
           </div>
         </div>
 
+        {snapshot.emergencyFollowUpEvents.length > 0 ? (
+          <div className="mt-5 rounded-[24px] border border-rose-200 bg-rose-50 px-4 py-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-rose-800">
+              Dated emergency response events
+            </p>
+            <ul className="mt-3 space-y-2 text-sm leading-6 text-rose-950">
+              {snapshot.emergencyFollowUpEvents.slice(0, 4).map((event) => (
+                <li key={event.id}>
+                  {format(new Date(event.eventAt), "MMM d, yyyy 'at' h:mm a")} -{" "}
+                  {event.summary} Source: {event.source}.
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
         <div className="mt-5 flex flex-wrap gap-2">
+          <span className="badge bg-slate-100 text-slate-700">
+            Confidence: {snapshot.confidence}
+          </span>
           <span className="badge bg-slate-100 text-slate-700">
             Reliability: {snapshot.reliabilityLevel}
           </span>
+          {snapshot.lastCheckInGapDays != null ? (
+            <span className="badge bg-white text-slate-700">
+              Last check-in gap: {Math.floor(snapshot.lastCheckInGapDays)}d
+            </span>
+          ) : null}
           {snapshot.dominantEmotion ? (
             <span className="badge bg-white text-slate-700">
               Dominant mood: {snapshot.dominantEmotion}
+            </span>
+          ) : null}
+          {snapshot.deteriorationWatch ? (
+            <span className="badge bg-orange-100 text-orange-900">
+              Deterioration Watch
             </span>
           ) : null}
           {snapshot.crisisLevel !== "none" ? (
@@ -2932,6 +3010,9 @@ function QueueCard({
               {snapshot.riskLevel}
             </span>
             <p className="mt-2 text-sm font-semibold text-slate-700">Score {snapshot.score}</p>
+            <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              72h {snapshot.acute72hScore} / 7d {snapshot.trend7dScore}
+            </p>
           </div>
         </div>
 
@@ -2949,8 +3030,14 @@ function QueueCard({
 
         <div className="mt-4 flex flex-wrap gap-2">
           <span className="badge bg-white/85 text-slate-700">
+            Confidence {snapshot.confidence}
+          </span>
+          <span className="badge bg-white/85 text-slate-700">
             Reliability {snapshot.reliabilityLevel}
           </span>
+          {snapshot.deteriorationWatch ? (
+            <span className="badge bg-orange-100 text-orange-900">Deterioration Watch</span>
+          ) : null}
           {snapshot.mismatchSummary ? (
             <span className="badge bg-amber-100 text-amber-900">Mismatch flagged</span>
           ) : null}
@@ -3062,7 +3149,9 @@ function EmotionLogCard({
           value={
             log.substanceUseToday != null
               ? log.substanceUseToday
-                ? "Yes"
+                ? log.substanceUsed
+                  ? `Yes - ${log.substanceUsed}`
+                  : "Yes"
                 : "No"
               : "Not recorded"
           }

@@ -29,6 +29,7 @@ export const emotions = sqliteTable("emotions", {
   stressLevel: integer("stress_level"),
   cravingLevel: integer("craving_level"),
   substanceUseToday: integer("substance_use_today", { mode: "boolean" }),
+  substanceUsed: text("substance_used"),
   moneyChangedToday: integer("money_changed_today", { mode: "boolean" }),
   medicationAdherence: text("medication_adherence", {
     enum: medicationAdherenceOptions,

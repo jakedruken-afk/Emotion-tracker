@@ -23,6 +23,9 @@
 
   html {
     min-height: 100%;
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
     color-scheme: light;
     scroll-behavior: smooth;
     background: #f4fffc;
@@ -31,6 +34,8 @@
   body {
     @apply min-h-screen text-slate-900 antialiased;
     min-height: 100svh;
+    width: 100%;
+    max-width: 100%;
     overflow-x: hidden;
     font-family: "Aptos", "Trebuchet MS", "Segoe UI", sans-serif;
     background:
@@ -63,6 +68,9 @@
   #root {
     @apply min-h-screen;
     min-height: 100svh;
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
   }
 }
 
@@ -70,6 +78,9 @@
   .app-shell {
     @apply min-h-screen;
     position: relative;
+    width: 100%;
+    max-width: 100vw;
+    overflow-x: hidden;
     padding-bottom: var(--safe-area-bottom);
   }
 
@@ -86,6 +97,9 @@
 
   .app-topbar {
     @apply sticky top-0 z-30 border-b backdrop-blur-xl;
+    width: 100%;
+    max-width: 100vw;
+    overflow-x: hidden;
     background: rgba(255, 255, 249, 0.76);
     border-color: rgba(112, 181, 184, 0.16);
     padding-top: var(--safe-area-top);
@@ -93,6 +107,8 @@
 
   .app-container {
     @apply mx-auto w-full max-w-7xl px-3 sm:px-4;
+    min-width: 0;
+    max-width: min(80rem, 100%);
     padding-left: max(0.75rem, var(--safe-area-left));
     padding-right: max(0.75rem, var(--safe-area-right));
   }
@@ -121,6 +137,8 @@
   .panel,
   .surface-panel {
     @apply rounded-[24px] border md:rounded-[32px];
+    min-width: 0;
+    max-width: 100%;
     background: var(--brand-surface);
     border-color: var(--brand-line);
     box-shadow: var(--brand-shadow);
@@ -141,22 +159,28 @@
 
   .soft-panel {
     @apply rounded-[22px] border p-4 md:rounded-[28px] md:p-5;
+    min-width: 0;
+    max-width: 100%;
     border-color: rgba(125, 184, 184, 0.24);
     background: rgba(247, 255, 252, 0.88);
   }
 
   .warm-panel {
     @apply rounded-[22px] border p-4 md:rounded-[28px] md:p-5;
+    min-width: 0;
+    max-width: 100%;
     border-color: rgba(170, 223, 207, 0.36);
     background: linear-gradient(180deg, rgba(250, 255, 251, 0.98), rgba(242, 252, 248, 0.9));
   }
 
   .hero-grid {
     @apply grid gap-6 xl:grid-cols-[1.25fr_0.95fr];
+    min-width: 0;
   }
 
   .hero-copy {
     @apply max-w-2xl;
+    min-width: 0;
   }
 
   .eyebrow {
@@ -176,10 +200,12 @@
 
   .metric-grid {
     @apply grid gap-3 sm:grid-cols-2 md:gap-4;
+    min-width: 0;
   }
 
   .metric-tile {
     @apply rounded-[20px] border px-3 py-3 md:rounded-[26px] md:px-4 md:py-4;
+    min-width: 0;
     border-color: rgba(122, 184, 182, 0.2);
     background: rgba(255, 255, 252, 0.85);
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
@@ -222,10 +248,15 @@
 
   .tab-row {
     @apply mt-4 flex gap-2 overflow-x-auto pb-1 md:mt-6 md:gap-3;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    -webkit-overflow-scrolling: touch;
   }
 
   .tab-pill {
     @apply relative min-w-[132px] shrink-0 rounded-[18px] border px-3 py-2.5 text-left transition md:min-w-[160px] md:rounded-[24px] md:px-4 md:py-3;
+    max-width: 100%;
     border-color: rgba(126, 186, 184, 0.22);
     background: rgba(255, 255, 252, 0.78);
   }
@@ -243,11 +274,15 @@
 
   .tab-pill-label {
     @apply block text-sm font-semibold;
+    min-width: 0;
+    overflow-wrap: anywhere;
     color: var(--brand-ink);
   }
 
   .tab-pill-copy {
     @apply mt-1 block text-xs leading-5;
+    min-width: 0;
+    overflow-wrap: anywhere;
     color: #6a8f90;
   }
 
@@ -259,10 +294,12 @@
 
   .content-stack {
     @apply mt-4 space-y-4 md:mt-6 md:space-y-6;
+    min-width: 0;
   }
 
   .content-grid {
     @apply grid gap-4 md:gap-6 xl:grid-cols-[1.2fr_0.85fr];
+    min-width: 0;
   }
 
   .section-title {
@@ -358,14 +395,17 @@
 
   .stack-grid {
     @apply grid gap-4 md:grid-cols-2 xl:grid-cols-3;
+    min-width: 0;
   }
 
   .form-grid {
     @apply grid gap-4 md:grid-cols-2;
+    min-width: 0;
   }
 
   .form-grid-wide {
     @apply grid gap-4;
+    min-width: 0;
   }
 
   .mini-heading {
@@ -379,6 +419,7 @@
 
   .brand-lockup {
     @apply flex gap-4;
+    min-width: 0;
   }
 
   .brand-lockup-center {
@@ -399,6 +440,28 @@
 
   .brand-copy {
     @apply min-w-0;
+  }
+
+  .patient-header-brand {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  .patient-header-actions {
+    min-width: 0;
+    margin-left: auto;
+  }
+
+  .patient-help-short {
+    display: inline;
+  }
+
+  .patient-help-full {
+    display: none;
+  }
+
+  .patient-main-container {
+    overflow-x: hidden;
   }
 
   .brand-copy-center {
@@ -531,9 +594,51 @@
   }
 }
 
+@media (min-width: 640px) {
+  .patient-help-short {
+    display: none;
+  }
+
+  .patient-help-full {
+    display: inline;
+  }
+}
+
 @media (max-width: 640px) {
   html {
     font-size: 15px;
+  }
+
+  .app-container {
+    width: 100%;
+    max-width: 100%;
+    padding-left: max(0.75rem, var(--safe-area-left));
+    padding-right: max(0.75rem, var(--safe-area-right));
+  }
+
+  .patient-header-container {
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+
+  .patient-header-brand {
+    flex-basis: 9.25rem;
+  }
+
+  .patient-header-actions {
+    gap: 0.5rem;
+  }
+
+  .patient-header-button {
+    min-height: 2.75rem;
+    border-radius: 999px;
+    padding: 0.65rem 0.75rem;
+    white-space: nowrap;
+  }
+
+  .patient-header-button svg {
+    flex-shrink: 0;
   }
 
   .page-shell {
@@ -549,12 +654,70 @@
   }
 
   .app-topbar .brand-icon-shell {
-    width: 44px;
-    height: 44px;
+    width: 42px;
+    height: 42px;
+  }
+
+  .app-topbar .brand-lockup {
+    gap: 0.65rem;
+  }
+
+  .app-topbar .brand-wordmark {
+    font-size: 1rem;
+    line-height: 1.1;
+  }
+
+  .app-topbar .brand-context {
+    margin-top: 0.2rem;
+    font-size: 0.68rem;
+    line-height: 1.25;
+    letter-spacing: 0.06em;
   }
 
   .app-topbar .brand-subcopy {
     display: none;
+  }
+
+  .hero-panel {
+    overflow: hidden;
+    border-radius: 24px;
+    padding: 1rem;
+  }
+
+  .tab-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
+    overflow: visible;
+    padding-bottom: 0;
+  }
+
+  .tab-pill {
+    width: 100%;
+    min-width: 0;
+    flex-shrink: 1;
+    border-radius: 20px;
+    padding: 0.9rem 0.85rem;
+  }
+
+  .tab-pill-label {
+    padding-right: 2.25rem;
+    font-size: 0.95rem;
+    line-height: 1.2;
+  }
+
+  .tab-pill-copy {
+    display: -webkit-box;
+    overflow: hidden;
+    font-size: 0.78rem;
+    line-height: 1.35;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  .tab-pill-badge {
+    right: 0.75rem;
+    top: 0.75rem;
   }
 
   .workspace-panel {
@@ -587,6 +750,35 @@
   .mini-heading {
     font-size: 0.72rem;
     letter-spacing: 0.08em;
+  }
+}
+
+@media (max-width: 390px) {
+  .patient-header-container {
+    gap: 0.6rem;
+  }
+
+  .patient-header-brand {
+    flex-basis: 8.5rem;
+  }
+
+  .patient-header-actions {
+    gap: 0.4rem;
+  }
+
+  .patient-header-button {
+    width: 2.65rem;
+    min-height: 2.65rem;
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  .patient-header-button-label {
+    display: none;
+  }
+
+  .tab-row {
+    grid-template-columns: 1fr;
   }
 }
 

@@ -146,17 +146,27 @@ export function buildClinicianSummary(
         "MMM d",
       )}.`
     : "No recent support note is on file.";
+  const emergencyFollowUpText =
+    weeklyReview.risk.emergencyFollowUpEvents.length > 0
+      ? weeklyReview.risk.emergencyFollowUpEvents
+          .slice(0, 4)
+          .map(
+            (event) =>
+              `${format(new Date(event.eventAt), "MMM d, yyyy 'at' h:mm a")} (${event.source})`,
+          )
+          .join("; ")
+      : "No emergency response events were flagged in recent patient data.";
 
   return [
     "CLINICAL SUMMARY NOTE",
     `Patient: ${patientId}`,
     `Risk: ${weeklyReview.risk.riskLevel}${
       weeklyReview.risk.crisisSummary ? ` | ${weeklyReview.risk.crisisSummary}` : ""
-    }`,
+    } | 72h ${weeklyReview.risk.acute72hScore}/100 | 7d ${weeklyReview.risk.trend7dScore}/100 | Confidence ${weeklyReview.risk.confidence}`,
     `What is happening: ${
       weeklyReview.keyChanges.length > 0
         ? weeklyReview.keyChanges.join("; ")
-        : "No major change signal was detected."
+        : "No major warning signal was detected."
     }`,
     `Why it matters: ${
       weeklyReview.risk.reasons.length > 0
@@ -167,6 +177,7 @@ export function buildClinicianSummary(
     `Reliability: ${weeklyReview.risk.reliabilityLevel}. ${weeklyReview.risk.reliabilitySummary}${
       weeklyReview.risk.mismatchSummary ? ` ${weeklyReview.risk.mismatchSummary}` : ""
     }`,
+    `Emergency response follow-up: ${emergencyFollowUpText}`,
     `Latest weekly screen: ${screeningText}`,
     `Latest support input: ${observationText}`,
   ].join("\n");

@@ -24,6 +24,8 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>L.A.M.B can attach your current location to a mood check-in only when you choose to include a GPS snapshot.</string>
 	<key>UIMainStoryboardFile</key>
 	<string>Main</string>
 	<key>UILaunchStoryboardName</key>

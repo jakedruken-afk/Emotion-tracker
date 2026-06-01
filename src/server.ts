@@ -347,6 +347,19 @@ const crisisKeywords = [
   "kill someone",
 ];
 
+const emergencyInterventionPatterns = [
+  /\b(crisis|mental health crisis|mobile crisis|crisis team|crisis response|crisis worker)\b.{0,80}\b(called|contacted|phoned|sent|dispatched|came|arrived|attended|visited|went to|showed up)\b/,
+  /\b(called|contacted|phoned|sent|dispatched)\b.{0,80}\b(crisis|mental health crisis|mobile crisis|crisis team|crisis response|crisis worker)\b/,
+  /\b(911|9-1-1|emergency services|ems|paramedic|paramedics|ambulance|police|rcmp)\b.{0,80}\b(called|contacted|phoned|sent|dispatched|came|arrived|attended|visited|went to|showed up)\b/,
+  /\b(called|contacted|phoned|sent|dispatched)\b.{0,80}\b(911|9-1-1|emergency services|ems|paramedic|paramedics|ambulance|police|rcmp)\b/,
+  /\b(wellness|welfare) check\b/,
+];
+
+const negatedEmergencyInterventionPatterns = [
+  /\b(didn'?t|did not|never|wasn'?t|was not|weren'?t|were not|no one)\b.{0,40}\b(call|called|contact|contacted|phone|phoned|send|sent|dispatch|dispatched|come|came|arrive|arrived)\b.{0,80}\b(crisis|911|9-1-1|emergency|ems|paramedic|ambulance|police|rcmp|wellness|welfare)\b/,
+  /\b(crisis|911|9-1-1|emergency|ems|paramedic|ambulance|police|rcmp|wellness|welfare)\b.{0,80}\b(wasn'?t|was not|weren'?t|were not|never|not)\b.{0,40}\b(called|contacted|phoned|sent|dispatched|needed)\b/,
+];
+
 const criticalCrisisPatterns = [
   /\b(i am|i'm|im|i feel|feel) (not safe|unsafe)\b/,
   /\b(can'?t|cannot) keep myself safe\b/,
@@ -1756,7 +1769,7 @@ api.get("/emotions/:patientId", async (c) => {
 
 api.post("/emotions", requireRole("patient"), async (c) => {
   return handleRoute(c, async () => {
-    const body = await readJsonObject(c);
+    const body = normalizeCompatibilityEmotionBody(await readJsonObject(c));
     const patient = await resolveAccessiblePatient(c, requireString(body.patientId, "patientId"));
     const log = await insertCompatibilityLog(c, patient.id, "patient", "mood", body, optionalString(body.notes));
     await auditLog(c, c.var.user.id, patient.id, "create_emotion");
@@ -1766,7 +1779,7 @@ api.post("/emotions", requireRole("patient"), async (c) => {
 
 api.patch("/emotions/:id", requireRole("patient"), async (c) => {
   return handleRoute(c, async () => {
-    const body = await readJsonObject(c);
+    const body = normalizeCompatibilityEmotionBody(await readJsonObject(c));
     const log = await updateCompatibilityLog(c, requireInteger(c.req.param("id"), "id"), body, optionalString(body.notes));
     const patient = await getPatient(c, log.patient_id);
     if (!patient) {
@@ -3355,6 +3368,24 @@ function recordPatientId(value: unknown, patient: PatientRow): string {
   return isJsonObject(value) && typeof value.patientId === "string" ? value.patientId : publicPatientId(patient);
 }
 
+function normalizeCompatibilityEmotionBody(body: JsonObject): JsonObject {
+  const substanceUsed = optionalString(body.substanceUsed);
+
+  if (body.substanceUseToday === true) {
+    if (substanceUsed == null) {
+      throw new HttpError(400, "substanceUsed is required when substanceUseToday is true");
+    }
+
+    if (substanceUsed.length > 200) {
+      throw new HttpError(400, "substanceUsed must be 200 characters or less");
+    }
+
+    return { ...body, substanceUsed };
+  }
+
+  return { ...body, substanceUsed: null };
+}
+
 function toEmotionRecord(log: LogRow, patient: PatientRow) {
   const value = parseStoredJson(log.value);
   const body = isJsonObject(value) ? value : {};
@@ -3368,6 +3399,7 @@ function toEmotionRecord(log: LogRow, patient: PatientRow) {
     stressLevel: typeof body.stressLevel === "number" ? body.stressLevel : null,
     cravingLevel: typeof body.cravingLevel === "number" ? body.cravingLevel : null,
     substanceUseToday: typeof body.substanceUseToday === "boolean" ? body.substanceUseToday : null,
+    substanceUsed: typeof body.substanceUsed === "string" ? body.substanceUsed : null,
     moneyChangedToday: typeof body.moneyChangedToday === "boolean" ? body.moneyChangedToday : null,
     medicationAdherence: typeof body.medicationAdherence === "string" ? body.medicationAdherence : null,
     missedMedicationName: typeof body.missedMedicationName === "string" ? body.missedMedicationName : null,
@@ -3968,6 +4000,17 @@ function evaluateCompatibilityCrisisLanguage(value: unknown, note: string | null
   const hasHistoricalContext = historicalOrQuotedCrisisContext.some((pattern) =>
     pattern.test(text),
   );
+  const hasEmergencyIntervention =
+    !negatedEmergencyInterventionPatterns.some((pattern) => pattern.test(text)) &&
+    emergencyInterventionPatterns.some((pattern) => pattern.test(text));
+
+  if (hasEmergencyIntervention) {
+    return {
+      level: "critical" as const,
+      summary:
+        "Patient text reports emergency mental-health or crisis-response involvement. Immediate staff review recommended.",
+    };
+  }
 
   if (
     !hasHistoricalContext &&

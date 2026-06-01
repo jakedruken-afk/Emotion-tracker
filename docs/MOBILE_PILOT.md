@@ -3,6 +3,9 @@
 This guide explains the current patient-first mobile scope, the synthetic demo workflow, and the
 guardrails that must stay in place before any supervised participant pilot.
 
+For the full app-store and device-readiness gate, use
+[`MOBILE_READINESS_CHECKLIST.md`](MOBILE_READINESS_CHECKLIST.md).
+
 ## Current Mobile Scope
 
 L.A.M.B mobile is intentionally narrower than the desktop product. The mobile path is for patient

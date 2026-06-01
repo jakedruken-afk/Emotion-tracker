@@ -57,12 +57,12 @@ const tutorialSteps: TutorialStep[] = [
   },
   {
     eyebrow: "Review",
-    title: "History shows what you have already sent.",
-    body: "You can look back at recent mood entries, sleep reports, and weekly screens.",
+    title: "Dashboard shows your charts and what you have already sent.",
+    body: "You can look back at recent mood entries, sleep reports, weekly screens, and charted patterns.",
     detail:
       "If something was entered wrong, use the edit buttons so the care team can see the correction trail.",
     tab: "history",
-    actionLabel: "Open History",
+    actionLabel: "Open Dashboard",
     Icon: History,
   },
   {

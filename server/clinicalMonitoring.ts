@@ -41,6 +41,19 @@ const passivePatterns = [
   /\beveryone would be better off without me\b/,
 ];
 
+const emergencyInterventionPatterns = [
+  /\b(crisis|mental health crisis|mobile crisis|crisis team|crisis response|crisis worker)\b.{0,80}\b(called|contacted|phoned|sent|dispatched|came|arrived|attended|visited|went to|showed up)\b/,
+  /\b(called|contacted|phoned|sent|dispatched)\b.{0,80}\b(crisis|mental health crisis|mobile crisis|crisis team|crisis response|crisis worker)\b/,
+  /\b(911|9-1-1|emergency services|ems|paramedic|paramedics|ambulance|police|rcmp)\b.{0,80}\b(called|contacted|phoned|sent|dispatched|came|arrived|attended|visited|went to|showed up)\b/,
+  /\b(called|contacted|phoned|sent|dispatched)\b.{0,80}\b(911|9-1-1|emergency services|ems|paramedic|paramedics|ambulance|police|rcmp)\b/,
+  /\b(wellness|welfare) check\b/,
+];
+
+const negatedEmergencyInterventionPatterns = [
+  /\b(didn'?t|did not|never|wasn'?t|was not|weren'?t|were not|no one)\b.{0,40}\b(call|called|contact|contacted|phone|phoned|send|sent|dispatch|dispatched|come|came|arrive|arrived)\b.{0,80}\b(crisis|911|9-1-1|emergency|ems|paramedic|ambulance|police|rcmp|wellness|welfare)\b/,
+  /\b(crisis|911|9-1-1|emergency|ems|paramedic|ambulance|police|rcmp|wellness|welfare)\b.{0,80}\b(wasn'?t|was not|weren'?t|were not|never|not)\b.{0,40}\b(called|contacted|phoned|sent|dispatched|needed)\b/,
+];
+
 const historicalOrQuotedContext = [
   /\b(last year|months ago|years ago|in the past|used to|used to have)\b/,
   /\b(screen|question|form) asked\b/,
@@ -69,6 +82,17 @@ export function evaluatePatientTextForCrisis(texts: Array<string | null | undefi
     const hasHistoricalContext = historicalOrQuotedContext.some((pattern) =>
       pattern.test(normalized),
     );
+    const hasEmergencyIntervention =
+      !negatedEmergencyInterventionPatterns.some((pattern) => pattern.test(normalized)) &&
+      emergencyInterventionPatterns.some((pattern) => pattern.test(normalized));
+
+    if (hasEmergencyIntervention) {
+      level = "critical";
+      evidence.push(
+        "Text reports emergency mental-health or crisis-response involvement.",
+      );
+      break;
+    }
 
     if (!hasHistoricalContext) {
       for (const pattern of criticalPatterns) {
@@ -100,7 +124,9 @@ export function evaluatePatientTextForCrisis(texts: Array<string | null | undefi
     evidence: Array.from(new Set(evidence)),
     summary:
       level === "critical"
-        ? "Patient text suggests active self-harm intent or an immediate need for safety support."
+        ? evidence.some((item) => item.includes("emergency mental-health"))
+          ? "Patient text reports emergency mental-health or crisis-response involvement. Immediate staff review recommended."
+          : "Patient text suggests active self-harm intent or an immediate need for safety support."
         : level === "high"
           ? "Patient text suggests thoughts about self-harm or not wanting to be here."
           : null,

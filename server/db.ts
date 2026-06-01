@@ -33,6 +33,7 @@ export async function initializeDatabase() {
       stress_level INTEGER,
       craving_level INTEGER,
       substance_use_today INTEGER,
+      substance_used TEXT,
       money_changed_today INTEGER,
       medication_adherence TEXT,
       missed_medication_name TEXT,
@@ -264,6 +265,10 @@ function ensureEmotionColumns() {
 
   if (!columnNames.has("substance_use_today")) {
     db.exec("ALTER TABLE emotions ADD COLUMN substance_use_today INTEGER");
+  }
+
+  if (!columnNames.has("substance_used")) {
+    db.exec("ALTER TABLE emotions ADD COLUMN substance_used TEXT");
   }
 
   if (!columnNames.has("money_changed_today")) {

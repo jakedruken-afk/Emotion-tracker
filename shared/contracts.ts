@@ -289,6 +289,7 @@ const insertEmotionStructuredShape = {
   stressLevel: z.number().int().min(0).max(10),
   cravingLevel: z.number().int().min(0).max(10),
   substanceUseToday: z.boolean(),
+  substanceUsed: optionalMedicationTextSchema,
   moneyChangedToday: z.boolean(),
   medicationAdherence: z.enum(medicationAdherenceOptions),
   missedMedicationName: optionalMedicationTextSchema,
@@ -304,6 +305,7 @@ const emotionStructuredShape = {
   stressLevel: z.number().int().min(0).max(10).nullable(),
   cravingLevel: z.number().int().min(0).max(10).nullable(),
   substanceUseToday: z.boolean().nullable(),
+  substanceUsed: z.string().nullable(),
   moneyChangedToday: z.boolean().nullable(),
   medicationAdherence: z.enum(medicationAdherenceOptions).nullable(),
   missedMedicationName: z.string().nullable(),
@@ -346,6 +348,23 @@ function validateEmotionMedication(
       code: z.ZodIssueCode.custom,
       message: "Tell us why medication was missed",
       path: ["missedMedicationReason"],
+    });
+  }
+}
+
+function validateEmotionSubstance(
+  value: z.infer<typeof emotionInsertSchemaBase> | z.infer<typeof updateEmotionSchemaBase>,
+  ctx: z.RefinementCtx,
+) {
+  if (!value.substanceUseToday) {
+    return;
+  }
+
+  if (value.substanceUsed == null) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Tell us which substance was used",
+      path: ["substanceUsed"],
     });
   }
 }
@@ -395,6 +414,10 @@ function validateEmotionInput(
 
   if ("medicationAdherence" in value && value.medicationAdherence != null) {
     validateEmotionMedication(
+      value as z.infer<typeof emotionInsertSchemaBase> | z.infer<typeof updateEmotionSchemaBase>,
+      ctx,
+    );
+    validateEmotionSubstance(
       value as z.infer<typeof emotionInsertSchemaBase> | z.infer<typeof updateEmotionSchemaBase>,
       ctx,
     );
@@ -1121,6 +1144,7 @@ export function getEmotionFlags(entry: {
   stressLevel: number | null;
   cravingLevel: number | null;
   substanceUseToday: boolean | null;
+  substanceUsed?: string | null;
   moneyChangedToday: boolean | null;
   medicationAdherence: MedicationAdherence | null;
   mealsCount?: number | null;
@@ -1140,7 +1164,12 @@ export function getEmotionFlags(entry: {
   }
 
   if (entry.substanceUseToday) {
-    flags.push("reported substance use");
+    const substanceUsed = (entry.substanceUsed ?? "").trim();
+    flags.push(
+      substanceUsed.length > 0
+        ? `reported substance use: ${substanceUsed}`
+        : "reported substance use",
+    );
   }
 
   if (entry.moneyChangedToday && entry.cravingLevel != null && entry.cravingLevel >= 7) {
@@ -1169,6 +1198,7 @@ export function getCheckInRichness(entry: {
   stressLevel: number | null;
   cravingLevel: number | null;
   substanceUseToday: boolean | null;
+  substanceUsed?: string | null;
   moneyChangedToday: boolean | null;
   medicationAdherence: MedicationAdherence | null;
   missedMedicationName?: string | null;
@@ -1187,8 +1217,10 @@ export function getCheckInRichness(entry: {
   const hasMedicationFollowUp =
     (entry.missedMedicationName ?? "").trim().length > 0 ||
     entry.missedMedicationReason != null;
+  const hasSubstanceFollowUp =
+    entry.substanceUseToday === true && (entry.substanceUsed ?? "").trim().length > 0;
 
-  if (hasStructuredData && (hasGps || hasSubstantialNote || hasMedicationFollowUp)) {
+  if (hasStructuredData && (hasGps || hasSubstantialNote || hasMedicationFollowUp || hasSubstanceFollowUp)) {
     return "Corroborated";
   }
 
