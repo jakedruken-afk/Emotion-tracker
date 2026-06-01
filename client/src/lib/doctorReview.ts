@@ -46,13 +46,14 @@ export function buildDoctorVisitSummary(input: DoctorReviewInput) {
   const latestObservation = input.observations[0];
   const emergencyFollowUpText =
     input.risk.emergencyFollowUpEvents.length > 0
-      ? input.risk.emergencyFollowUpEvents
-          .slice(0, 4)
+      ? `${input.risk.emergencyFollowUpEvents.length} emergency response event${
+          input.risk.emergencyFollowUpEvents.length === 1 ? "" : "s"
+        }: ${input.risk.emergencyFollowUpEvents
           .map(
             (event) =>
               `${format(new Date(event.eventAt), "MMM d, yyyy 'at' h:mm a")} (${event.source})`,
           )
-          .join("; ")
+          .join("; ")}`
       : "No emergency response events were flagged in recent patient data.";
 
   return [

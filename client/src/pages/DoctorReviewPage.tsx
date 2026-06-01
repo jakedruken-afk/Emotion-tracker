@@ -2,7 +2,9 @@ import { format } from "date-fns";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
+  AlertTriangle,
   ArrowLeft,
+  CalendarClock,
   ClipboardList,
   Copy,
   LogOut,
@@ -52,6 +54,7 @@ import { buildTrendPoints } from "../lib/clinicianSummary";
 import {
   buildPatientRiskSnapshot,
   buildWeeklyPatientReview,
+  type PatientRiskSnapshot,
 } from "../lib/riskReview";
 
 type DoctorReviewPageProps = {
@@ -251,6 +254,15 @@ export default function DoctorReviewPage({
     screenings,
     observations,
   );
+  const emergencyEventCount = risk.emergencyFollowUpEvents.length;
+  const emergencyEventLabel = `${emergencyEventCount} event${emergencyEventCount === 1 ? "" : "s"}`;
+  const emergencyEventSummary =
+    emergencyEventCount > 0
+      ? `${emergencyEventLabel} needing direct follow-up. Most recent ${format(
+          new Date(risk.emergencyFollowUpEvents[0].eventAt),
+          "MMM d, h:mm a",
+        )}.`
+      : "No emergency response events were flagged in recent patient data.";
   const visitSummary = buildDoctorVisitSummary({
     patientId: patientLabel,
     logs: summaryLogs,
@@ -630,6 +642,12 @@ export default function DoctorReviewPage({
                 tone="coral"
               />
               <MetricTile
+                label="Emergency events"
+                value={emergencyEventCount}
+                detail={emergencyEventSummary}
+                tone={emergencyEventCount > 0 ? "coral" : "sky"}
+              />
+              <MetricTile
                 label="Weekly screen"
                 value={
                   latestDisposition
@@ -707,8 +725,17 @@ export default function DoctorReviewPage({
                   {risk.crisisLevel === "critical" ? "Critical safety alert" : "Safety alert"}
                 </span>
               ) : null}
+              {emergencyEventCount > 0 ? (
+                <span className="badge bg-rose-100 text-rose-900">
+                  {emergencyEventLabel} requiring follow-up
+                </span>
+              ) : null}
             </div>
           </div>
+
+          {emergencyEventCount > 0 ? (
+            <EmergencyFollowUpCallout events={risk.emergencyFollowUpEvents} />
+          ) : null}
 
           <div className="mt-6 grid gap-4 lg:grid-cols-2">
             <div className="timeline-card">
@@ -760,27 +787,6 @@ export default function DoctorReviewPage({
                 {risk.suggestedActions.join(" ")}
               </p>
             </div>
-            {risk.emergencyFollowUpEvents.length > 0 ? (
-              <div className="timeline-card">
-                <p className="text-xs font-semibold uppercase tracking-wide text-rose-700">
-                  Emergency response follow-up
-                </p>
-                <div className="mt-3 space-y-3 text-sm leading-6 text-slate-700">
-                  {risk.emergencyFollowUpEvents.slice(0, 3).map((event) => (
-                    <div key={event.id}>
-                      <p className="font-semibold text-slate-900">
-                        {format(new Date(event.eventAt), "MMM d, yyyy 'at' h:mm a")}
-                      </p>
-                      <p>{event.summary}</p>
-                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                        Source: {event.source}. Recorded{" "}
-                        {format(new Date(event.recordedAt), "MMM d, yyyy 'at' h:mm a")}.
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : null}
           </div>
 
           <div className="mt-4 grid gap-4 lg:grid-cols-2">
@@ -995,8 +1001,8 @@ export default function DoctorReviewPage({
                   <SummaryRow
                     label="Emergency follow-up events"
                     value={
-                      risk.emergencyFollowUpEvents.length > 0
-                        ? `${risk.emergencyFollowUpEvents.length} event${risk.emergencyFollowUpEvents.length === 1 ? "" : "s"} on file`
+                      emergencyEventCount > 0
+                        ? `${emergencyEventLabel} on file - review urgent follow-up above`
                         : "None flagged"
                     }
                   />
@@ -1489,6 +1495,65 @@ function SectionHeader({
       <p className="mini-heading">{eyebrow}</p>
       <h2 className="section-title mt-3">{title}</h2>
       <p className="section-copy">{copy}</p>
+    </div>
+  );
+}
+
+function EmergencyFollowUpCallout({
+  events,
+}: {
+  events: PatientRiskSnapshot["emergencyFollowUpEvents"];
+}) {
+  const eventLabel = `${events.length} emergency response event${events.length === 1 ? "" : "s"}`;
+
+  return (
+    <div className="mt-6 rounded-[28px] border-2 border-rose-300 bg-rose-50 px-5 py-5 shadow-sm">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex gap-3">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-rose-100 text-rose-700">
+            <AlertTriangle className="h-5 w-5" aria-hidden="true" />
+          </span>
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-rose-700">
+              Urgent follow-up
+            </p>
+            <h3 className="mt-1 text-xl font-semibold text-rose-950">
+              {eventLabel} reported
+            </h3>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-rose-950/85">
+              Review each dated event before the visit. Confirm who responded, what happened after,
+              and whether the care plan or safety plan needs to change.
+            </p>
+          </div>
+        </div>
+        <span className="badge bg-white text-rose-900">{events.length} on file</span>
+      </div>
+
+      <div className="mt-4 grid gap-3">
+        {events.map((event, index) => (
+          <article
+            key={event.id}
+            className="rounded-2xl border border-rose-200 bg-white px-4 py-3"
+          >
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-rose-700">
+                  Event {index + 1}
+                </p>
+                <p className="mt-1 flex items-center gap-2 text-base font-semibold text-slate-950">
+                  <CalendarClock className="h-4 w-4 text-rose-700" aria-hidden="true" />
+                  {format(new Date(event.eventAt), "MMM d, yyyy 'at' h:mm a")}
+                </p>
+              </div>
+              <span className="badge bg-rose-100 text-rose-900">{event.source}</span>
+            </div>
+            <p className="mt-2 text-sm leading-6 text-slate-700">{event.summary}</p>
+            <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Recorded {format(new Date(event.recordedAt), "MMM d, yyyy 'at' h:mm a")}
+            </p>
+          </article>
+        ))}
+      </div>
     </div>
   );
 }

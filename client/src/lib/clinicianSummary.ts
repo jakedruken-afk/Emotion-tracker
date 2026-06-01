@@ -148,13 +148,14 @@ export function buildClinicianSummary(
     : "No recent support note is on file.";
   const emergencyFollowUpText =
     weeklyReview.risk.emergencyFollowUpEvents.length > 0
-      ? weeklyReview.risk.emergencyFollowUpEvents
-          .slice(0, 4)
+      ? `${weeklyReview.risk.emergencyFollowUpEvents.length} emergency response event${
+          weeklyReview.risk.emergencyFollowUpEvents.length === 1 ? "" : "s"
+        }: ${weeklyReview.risk.emergencyFollowUpEvents
           .map(
             (event) =>
               `${format(new Date(event.eventAt), "MMM d, yyyy 'at' h:mm a")} (${event.source})`,
           )
-          .join("; ")
+          .join("; ")}`
       : "No emergency response events were flagged in recent patient data.";
 
   return [
