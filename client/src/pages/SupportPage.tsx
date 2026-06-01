@@ -485,6 +485,8 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
     ? latestCriticalAlertEventByKey.get(criticalAlert.alertKey) ?? null
     : null;
   const isCriticalAlertPopupSuppressed = suppressesCriticalAlertPopup(latestCriticalAlertEvent);
+  const isCriticalAlertAcknowledgedByCurrentUser =
+    latestCriticalAlertEvent?.action === "acknowledged";
   const criticalAlertPatientDisplayName = criticalAlert
     ? (patientDisplayNameById.get(criticalAlert.patientId) ?? criticalAlert.patientId)
     : selectedPatientDisplayName;
@@ -524,6 +526,7 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
       Boolean(
         criticalAlert &&
           criticalAlert.status !== "acknowledged" &&
+          !isCriticalAlertAcknowledgedByCurrentUser &&
           !isCriticalAlertPopupSuppressed,
       ),
     );
@@ -532,9 +535,23 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
     criticalAlert?.patientId,
     criticalAlert?.status,
     criticalAlert?.targetId,
+    isCriticalAlertAcknowledgedByCurrentUser,
     isCriticalAlertPopupSuppressed,
     selectedPatientId,
   ]);
+
+  useEffect(() => {
+    if (!showCriticalAlert) {
+      return;
+    }
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [showCriticalAlert]);
 
   useEffect(() => {
     if (!showCriticalAlert || !criticalAlert) {
@@ -626,36 +643,91 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
     }
   };
 
+  const upsertCriticalAlertEvent = (event: CriticalAlertEventRecord) => {
+    setCriticalAlertEvents((current) => [
+      event,
+      ...current.filter(
+        (item) => !(item.alertKey === event.alertKey && item.userId === event.userId),
+      ),
+    ]);
+  };
+
+  const createLocalCriticalAlertEvent = (
+    alert: CriticalAlertTarget,
+    action: CriticalAlertEventAction,
+    note: string,
+    snoozedUntil: string | null = null,
+  ): CriticalAlertEventRecord => ({
+    id: Date.now(),
+    alertKey: alert.alertKey,
+    patientId: alert.patientId,
+    userId: user.id,
+    userName: supportWorkerName,
+    userEmail: user.username,
+    userRole: "support_worker",
+    patientName: patientDisplayNameById.get(alert.patientId) ?? null,
+    observationId: alert.observationId,
+    linkedEntityType: alert.linkedEntityType,
+    linkedEntityId: alert.linkedEntityId,
+    action,
+    note,
+    snoozedUntil,
+    timestamp: new Date().toISOString(),
+  });
+
   const recordCriticalAlertEvent = async (
     alert: CriticalAlertTarget,
     action: CriticalAlertEventAction,
     note: string,
-    options: { updateLocalState?: boolean; snoozedUntil?: string | null } = {},
+    options: {
+      updateLocalState?: boolean;
+      snoozedUntil?: string | null;
+      optimistic?: boolean;
+    } = {},
   ) => {
-    const event = await apiRequest<CriticalAlertEventRecord>("/api/critical-alert-events", {
-      method: "POST",
-      data: {
-        alertKey: alert.alertKey,
-        patientId: alert.patientId,
-        observationId: alert.observationId,
-        linkedEntityType: alert.linkedEntityType,
-        linkedEntityId: alert.linkedEntityId,
-        action,
-        note,
-        snoozedUntil: options.snoozedUntil ?? null,
-      },
-    });
+    const shouldUpdateLocalState = options.updateLocalState !== false;
+    const localEvent =
+      shouldUpdateLocalState && options.optimistic !== false
+        ? createLocalCriticalAlertEvent(alert, action, note, options.snoozedUntil ?? null)
+        : null;
 
-    if (options.updateLocalState !== false) {
-      setCriticalAlertEvents((current) => [
-        event,
-        ...current.filter(
-          (item) => !(item.alertKey === event.alertKey && item.userId === event.userId),
-        ),
-      ]);
+    if (localEvent) {
+      upsertCriticalAlertEvent(localEvent);
     }
 
-    return event;
+    try {
+      const event = await apiRequest<CriticalAlertEventRecord>("/api/critical-alert-events", {
+        method: "POST",
+        data: {
+          alertKey: alert.alertKey,
+          patientId: alert.patientId,
+          observationId: alert.observationId,
+          linkedEntityType: alert.linkedEntityType,
+          linkedEntityId: alert.linkedEntityId,
+          action,
+          note,
+          snoozedUntil: options.snoozedUntil ?? null,
+        },
+      });
+
+      if (shouldUpdateLocalState) {
+        upsertCriticalAlertEvent(event);
+      }
+
+      return event;
+    } catch (error) {
+      if (localEvent) {
+        setCriticalAlertEvents((current) =>
+          current.filter((event) => event.id !== localEvent.id),
+        );
+      }
+
+      throw error;
+    }
+  };
+
+  const markCriticalAlertAcknowledgedLocally = (alert: CriticalAlertTarget, note: string) => {
+    upsertCriticalAlertEvent(createLocalCriticalAlertEvent(alert, "acknowledged", note));
   };
 
   const handleOpenDoctorReview = () => {
@@ -718,25 +790,35 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
   };
 
   const handleAcknowledgeCriticalAlert = async () => {
-    if (!criticalAlert?.observationId) {
-      handleOpenCriticalAlert();
+    if (!criticalAlert) {
       return;
     }
 
     setIsAcknowledgingAlert(true);
 
+    const ownershipNote = "Support worker acknowledged ownership from the alert flow.";
+
     try {
-      await apiRequest(`/api/observations/${criticalAlert.observationId}/acknowledge`, {
-        method: "PATCH",
-        data: {
-          alertKey: criticalAlert.alertKey,
-          ownershipNote: "Support worker acknowledged ownership from the desktop alert flow.",
-        },
-      });
+      if (criticalAlert.observationId) {
+        await apiRequest(`/api/observations/${criticalAlert.observationId}/acknowledge`, {
+          method: "PATCH",
+          data: {
+            alertKey: criticalAlert.alertKey,
+            ownershipNote,
+          },
+        });
+        markCriticalAlertAcknowledgedLocally(criticalAlert, ownershipNote);
+      } else {
+        await recordCriticalAlertEvent(
+          criticalAlert,
+          "acknowledged",
+          "Support worker acknowledged this critical patient-data alert for follow-up.",
+        );
+      }
 
       toast({
         title: "Critical alert acknowledged",
-        description: "Ownership has been assigned to you and the app will jump to the triggering item.",
+        description: "The app recorded that you checked this alert and will jump to the triggering item.",
         variant: "success",
       });
 
@@ -978,6 +1060,7 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
             patientName={criticalAlertPatientDisplayName}
             patientCode={criticalAlertPatientCode}
             alert={criticalAlert}
+            latestEvent={latestCriticalAlertEvent}
             onOpen={handleOpenCriticalAlert}
             onAcknowledge={handleAcknowledgeCriticalAlert}
             isAcknowledging={isAcknowledgingAlert}
@@ -1002,12 +1085,15 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
           />
         ) : null}
 	
-        {criticalAlert && criticalAlert.status !== "acknowledged" ? (
+        {criticalAlert &&
+        criticalAlert.status !== "acknowledged" &&
+        !isCriticalAlertAcknowledgedByCurrentUser ? (
           <CriticalAlertCallout
             className="mb-6 ring-2 ring-rose-200"
             patientName={criticalAlertPatientDisplayName}
             patientCode={criticalAlertPatientCode}
             alert={criticalAlert}
+            latestEvent={latestCriticalAlertEvent}
             onOpen={handleOpenCriticalAlert}
             onAcknowledge={handleAcknowledgeCriticalAlert}
             isAcknowledging={isAcknowledgingAlert}
@@ -1475,6 +1561,7 @@ export default function SupportPage({ user, onLogout }: SupportPageProps) {
                       patientName={criticalAlertPatientDisplayName}
                       patientCode={criticalAlertPatientCode}
                       alert={criticalAlert}
+                      latestEvent={latestCriticalAlertEvent}
                       onOpen={handleOpenCriticalAlert}
                       onAcknowledge={handleAcknowledgeCriticalAlert}
                       isAcknowledging={isAcknowledgingAlert}
@@ -2529,6 +2616,7 @@ function CriticalAlertOverlay({
   patientName,
   patientCode,
   alert,
+  latestEvent,
   onOpen,
   onAcknowledge,
   isAcknowledging,
@@ -2537,60 +2625,66 @@ function CriticalAlertOverlay({
   patientName: string;
   patientCode: string;
   alert: CriticalAlertTarget;
+  latestEvent: CriticalAlertEventRecord | null;
   onOpen: () => void;
   onAcknowledge: () => void;
   isAcknowledging: boolean;
   onDismiss: () => void;
 }) {
-  const canAcknowledge = alert.observationId != null;
+  const isAcknowledged =
+    alert.status === "acknowledged" || latestEvent?.action === "acknowledged";
+  const statusText = getCriticalAlertStatusText(alert, latestEvent);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-950/45 px-4 py-10">
-      <div className="w-full max-w-3xl rounded-[32px] border border-rose-200 bg-white p-6 shadow-2xl">
-        <p className="mini-heading text-rose-700">{alert.title}</p>
-        <h2 className="mt-3 text-3xl font-semibold text-slate-950">
-          {patientName} needs immediate review.
-        </h2>
-        {patientName !== patientCode ? (
-          <p className="mt-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
-            Patient ID: {patientCode}
+    <div
+      className="fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-slate-950/45 px-3 py-3 sm:px-4 sm:py-10"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="critical-alert-title"
+    >
+      <div className="mx-auto flex min-h-full w-full max-w-3xl items-start justify-center">
+        <div className="max-h-[calc(100vh-1.5rem)] w-full overflow-y-auto overscroll-contain rounded-[24px] border border-rose-200 bg-white p-4 shadow-2xl sm:rounded-[32px] sm:p-6">
+          <p className="mini-heading text-rose-700">{alert.title}</p>
+          <h2 id="critical-alert-title" className="mt-3 text-2xl font-semibold text-slate-950 sm:text-3xl">
+            {patientName} needs immediate review.
+          </h2>
+          {patientName !== patientCode ? (
+            <p className="mt-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+              Patient ID: {patientCode}
+            </p>
+          ) : null}
+          <p className="mt-4 text-sm leading-6 text-slate-700 sm:text-base sm:leading-7">
+            {alert.summary}
           </p>
-        ) : null}
-        <p className="mt-4 text-base leading-7 text-slate-700">{alert.summary}</p>
-        <p className="mt-3 text-sm leading-6 text-slate-600">{alert.detail}</p>
-        <div className="mt-4 rounded-[22px] border border-rose-200 bg-rose-50 px-4 py-4 text-sm leading-6 text-rose-900">
-          {!canAcknowledge
-            ? "This critical risk signal should be opened and handled through the care team's safety workflow."
-            : alert.status === "acknowledged"
-            ? `Owned by ${alert.acknowledgedByName ?? "a support worker"}${alert.acknowledgedAt ? ` since ${format(new Date(alert.acknowledgedAt), "MMM d, yyyy 'at' h:mm a")}` : ""}.`
-            : "No support worker has acknowledged ownership yet."}
-          {alert.ownershipNote ? ` ${alert.ownershipNote}` : ""}
-        </div>
-        <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-rose-700">
-          Click below to jump straight to the triggering entry.
-        </p>
+          <p className="mt-3 text-sm leading-6 text-slate-600">{alert.detail}</p>
+          <div className="mt-4 rounded-[20px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm leading-6 text-rose-900 sm:rounded-[22px] sm:py-4">
+            {statusText}
+            {alert.ownershipNote ? ` ${alert.ownershipNote}` : ""}
+          </div>
+          <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-rose-700">
+            Acknowledge records that you checked this alert. Open only jumps to the entry.
+          </p>
 
-        <div className="mt-6 flex flex-col gap-3 sm:flex-row">
-          <button type="button" className="btn btn-primary flex-1" onClick={onOpen}>
-            Open Critical Alert
-          </button>
-          <button
-            type="button"
-            className="btn btn-secondary flex-1"
-            onClick={onAcknowledge}
-            disabled={canAcknowledge && (isAcknowledging || alert.status === "acknowledged")}
-          >
-            {!canAcknowledge
-              ? "Open Patient Review"
-              : alert.status === "acknowledged"
-              ? "Already Acknowledged"
-              : isAcknowledging
-                ? "Acknowledging..."
-                : "Acknowledge And Open"}
-          </button>
-          <button type="button" className="btn btn-secondary flex-1" onClick={onDismiss}>
-            Dismiss For Now
-          </button>
+          <div className="sticky bottom-0 -mx-4 -mb-4 mt-5 flex flex-col gap-2 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur sm:static sm:mx-0 sm:mb-0 sm:mt-6 sm:flex-row sm:border-0 sm:bg-transparent sm:p-0">
+            <button
+              type="button"
+              className="btn btn-primary min-h-11 flex-1"
+              onClick={onAcknowledge}
+              disabled={isAcknowledging || isAcknowledged}
+            >
+              {isAcknowledged
+                ? "Already Acknowledged"
+                : isAcknowledging
+                  ? "Acknowledging..."
+                  : "Acknowledge And Open"}
+            </button>
+            <button type="button" className="btn btn-secondary min-h-11 flex-1" onClick={onOpen}>
+              Open Only
+            </button>
+            <button type="button" className="btn btn-secondary min-h-11 flex-1" onClick={onDismiss}>
+              Dismiss For Now
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -2601,6 +2695,7 @@ function CriticalAlertCallout({
   patientName,
   patientCode,
   alert,
+  latestEvent,
   onOpen,
   onAcknowledge,
   isAcknowledging,
@@ -2609,12 +2704,15 @@ function CriticalAlertCallout({
   patientName: string;
   patientCode: string;
   alert: CriticalAlertTarget;
+  latestEvent: CriticalAlertEventRecord | null;
   onOpen: () => void;
   onAcknowledge: () => void;
   isAcknowledging: boolean;
   className?: string;
 }) {
-  const canAcknowledge = alert.observationId != null;
+  const isAcknowledged =
+    alert.status === "acknowledged" || latestEvent?.action === "acknowledged";
+  const statusText = getCriticalAlertStatusText(alert, latestEvent);
 
   return (
     <div
@@ -2634,33 +2732,61 @@ function CriticalAlertCallout({
       <p className="mt-3 text-sm leading-6 text-rose-900">{alert.summary}</p>
       <p className="mt-2 text-sm leading-6 text-rose-800">{alert.detail}</p>
       <p className="mt-3 text-sm leading-6 text-rose-800">
-        {!canAcknowledge
-          ? "Open this patient and follow the care team's safety workflow."
-          : alert.status === "acknowledged"
-          ? `Owned by ${alert.acknowledgedByName ?? "a support worker"}.`
-          : "No support worker has acknowledged ownership yet."}
+        {statusText}
       </p>
       <div className="mt-4 flex flex-col gap-3 sm:flex-row">
-        <button type="button" className="btn btn-primary flex-1" onClick={onOpen}>
-          Open Triggering Entry
-        </button>
         <button
           type="button"
-          className="btn btn-secondary flex-1"
+          className="btn btn-primary flex-1"
           onClick={onAcknowledge}
-          disabled={canAcknowledge && (isAcknowledging || alert.status === "acknowledged")}
+          disabled={isAcknowledging || isAcknowledged}
         >
-          {!canAcknowledge
-            ? "Open Patient Review"
-            : alert.status === "acknowledged"
+          {isAcknowledged
             ? "Already Acknowledged"
             : isAcknowledging
               ? "Acknowledging..."
               : "Acknowledge Alert"}
         </button>
+        <button type="button" className="btn btn-secondary flex-1" onClick={onOpen}>
+          Open Only
+        </button>
       </div>
     </div>
   );
+}
+
+function getCriticalAlertStatusText(
+  alert: CriticalAlertTarget,
+  latestEvent: CriticalAlertEventRecord | null,
+) {
+  if (alert.status === "acknowledged") {
+    return `Owned by ${alert.acknowledgedByName ?? "a support worker"}${
+      alert.acknowledgedAt
+        ? ` since ${format(new Date(alert.acknowledgedAt), "MMM d, yyyy 'at' h:mm a")}`
+        : ""
+    }.`;
+  }
+
+  if (latestEvent?.action === "acknowledged") {
+    return `You acknowledged this alert on ${format(
+      new Date(latestEvent.timestamp),
+      "MMM d, yyyy 'at' h:mm a",
+    )}.`;
+  }
+
+  if (latestEvent?.action === "opened") {
+    return "You opened this alert, but ownership has not been acknowledged yet.";
+  }
+
+  if (latestEvent?.action === "dismissed") {
+    return "You dismissed the popup for later. Ownership has not been acknowledged yet.";
+  }
+
+  if (latestEvent?.action === "viewed") {
+    return "This alert has been shown to you. Ownership has not been acknowledged yet.";
+  }
+
+  return "No support worker has acknowledged ownership yet.";
 }
 
 function suppressesCriticalAlertPopup(event: CriticalAlertEventRecord | null) {
