@@ -18,6 +18,7 @@ import LoginPage from "./pages/LoginPage";
 import NotFoundPage from "./pages/NotFoundPage";
 import PatientPage from "./pages/PatientPage";
 import SupportAccessPage from "./pages/SupportAccessPage";
+import SupportMobilePage from "./pages/SupportMobilePage";
 import SupportPage from "./pages/SupportPage";
 
 function getDefaultPath(user: Pick<AuthUser, "role" | "isAppAdmin"> | null) {
@@ -183,7 +184,23 @@ export default function App() {
           path="/support"
           element={
             <ProtectedRoute user={user} isLoading={isAuthLoading} role="support">
+              <SupportWorkspaceRoute user={user as AuthUser} onLogout={handleLogout} />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/support/desktop"
+          element={
+            <ProtectedRoute user={user} isLoading={isAuthLoading} role="support">
               <SupportPage user={user as AuthUser} onLogout={handleLogout} />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/support/mobile"
+          element={
+            <ProtectedRoute user={user} isLoading={isAuthLoading} role="support">
+              <SupportMobilePage user={user as AuthUser} onLogout={handleLogout} />
             </ProtectedRoute>
           }
         />
@@ -220,6 +237,50 @@ export default function App() {
       </Routes>
     </ToastProvider>
   );
+}
+
+function SupportWorkspaceRoute({
+  user,
+  onLogout,
+}: {
+  user: AuthUser;
+  onLogout: () => void;
+}) {
+  const shouldUseMobile = useSupportMobileViewport();
+
+  return shouldUseMobile ? (
+    <SupportMobilePage user={user} onLogout={onLogout} />
+  ) : (
+    <SupportPage user={user} onLogout={onLogout} />
+  );
+}
+
+function useSupportMobileViewport() {
+  const getInitialValue = () =>
+    typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches;
+  const [isMobile, setIsMobile] = useState(getInitialValue);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(max-width: 767px)");
+    const handleChange = () => setIsMobile(mediaQuery.matches);
+
+    handleChange();
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", handleChange);
+    } else {
+      mediaQuery.addListener(handleChange);
+    }
+
+    return () => {
+      if (typeof mediaQuery.removeEventListener === "function") {
+        mediaQuery.removeEventListener("change", handleChange);
+      } else {
+        mediaQuery.removeListener(handleChange);
+      }
+    };
+  }, []);
+
+  return isMobile;
 }
 
 function InviteActivationRoute({
